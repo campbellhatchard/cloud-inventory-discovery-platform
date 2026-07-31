@@ -1,87 +1,55 @@
 # Build Status
 
-## Release
+## Current feature build
 
-- Version: **0.2.0**
+- Version: **0.3.0**
 - Build date: **31 July 2026**
-- Status: **GitHub-ready / Render-ready implementation**
-- Canonical requirements: [`SPECIFICATION.md`](SPECIFICATION.md)
+- Status: **Implemented and locally validated; awaiting staging deployment and user acceptance**
+- Feature branch: `feature/quick-entry-v0.3.0`
+- Source baseline: `baseline-v0.2.1`
+- Baseline commit: `7a36fa0527e97191fa46147e663b59dc8ef282f2`
+- Enhancement specification: [`QUICK_ENTRY_SPEC_v0.3.0.md`](QUICK_ENTRY_SPEC_v0.3.0.md)
 
-## Implemented scope
+## Locked live baseline
+
+- Software: **v0.2.1**
+- Specification: **v1.1**
+- Environment: Render staging
+- Status: Validated and live
+
+## v0.3.0 implemented scope
 
 | Area | Status |
 | --- | --- |
-| Responsive PWA | Implemented |
-| Authentication and roles | Implemented |
-| Prospect/report isolation | Implemented and tested |
-| Multi-user reports and assignments | Implemented |
-| Comments and optimistic concurrency | Implemented and tested |
-| Standard process sections/question library | Implemented |
-| Mobile quick capture and offline queue | Implemented |
-| Photos and supporting attachments | Implemented |
-| Attachment extraction | Implemented and tested |
-| Findings, metrics, capabilities, benefits | Implemented |
-| Capability/knowledge governance | Implemented and tested |
-| Report merge and source lineage | Implemented |
-| AI policy gate and queued worker | Implemented; real API requires deployment credentials and approval |
-| Human review/application of AI output | Implemented and unit tested |
-| Draft/final validation | Implemented |
-| DOCX and PDF outputs | Implemented and tested |
-| Configurable branding and logo | Implemented |
-| Export/archive/retention/delete | Implemented and tested |
-| Audit log | Implemented |
-| Alembic/PostgreSQL/environment-specific Render Blueprint | Implemented |
-| PowerShell staging-first deployment toolkit | Implemented |
-| CI pipeline | Implemented |
+| Quick Entry default report screen | Implemented |
+| Area of Operation routing | Implemented |
+| Persistent area selection per report | Implemented |
+| Large multiline quick-note capture | Implemented |
+| Separate camera and file controls | Implemented |
+| Optional evidence caption | Implemented |
+| Placement removed from capture UI | Implemented |
+| Detailed-section capture forms removed | Implemented |
+| Printing process section and prompts | Implemented |
+| Existing report backfill migration | Implemented and simulated |
+| Finalized-report preservation | Implemented and simulated |
+| Evidence sets section In Progress | Implemented and tested |
+| Offline routing by resolved section ID | Implemented |
+| Version and service-worker cache update | Implemented |
 
-## Automated acceptance evidence
+## Quality gates completed
 
-Current local suite:
-
-```text
-15 passed
-```
-
-Coverage includes:
-
-- authentication security and first-login change;
-- authorization and cross-prospect isolation;
-- report creation and standard section generation;
-- idempotent/offline mutation handling;
-- evidence upload and extraction;
-- document generation and draft watermark;
-- final-publication validation blocking;
-- optimistic concurrency;
-- assignment and comments;
-- capability governance and knowledge promotion;
-- export, archive, prospect deletion, and draft-report deletion;
-- queued AI-job execution and mandatory pending review state.
-
-## Quality gates
-
+- Automated test suite: **20 passed**
 - Python bytecode compilation: pass
-- JavaScript syntax check: pass
-- Alembic upgrade against a clean database: pass
-- Seed loading against migrated schema: pass
-- DOCX/PDF generation: pass
-- DOCX/PDF page rendering and visual inspection: pass
-- Static unused-import check: pass
-- Ruff lint: configured in CI; local Ruff executable was unavailable in the build environment
-- GitHub Actions workflow: configured
-- PowerShell parser gate: configured in CI
-- PowerShell deployment toolkit: structural/static review complete and CI parser gate configured; native `pwsh` execution was unavailable in the Linux build container, and live account actions require user credentials
+- JavaScript syntax validation: pass
+- OpenAPI generation: pass
+- Existing DOCX/PDF generation regression: pass
+- Alembic migration simulation: pass
 
-## Deliberate limitations / remaining deployment acceptance
+## Remaining gates
 
-1. No real GitHub remote has been configured or pushed by this build package.
-2. No Render account deployment has been performed; account credentials and approved environment secrets are required. The supplied PowerShell toolkit performs those actions from the operator’s workstation.
-3. No live OpenAI API call has been made; confidential AI remains disabled by default.
-4. No antivirus engine is bundled. File allowlisting and structural validation are implemented, but production malware scanning requires an organizational decision.
-5. PostgreSQL row-level security is not enabled; isolation is enforced in the application and tested.
-6. Browser-based field acceptance must be repeated on the organization’s target phones/tablets and network conditions.
-7. Final customer branding/legal language and capability catalog require business approval.
-8. Backup and restore must be tested in the target Render/object-storage accounts.
-
-## Recommended release gate
-
-Deploy first to a separate staging environment and execute the production sign-off checklist in [`DEPLOYMENT.md`](DEPLOYMENT.md). Do not enable confidential AI or upload real customer information until security, privacy, storage, and retention controls are approved.
+1. Push feature branch to GitHub.
+2. Deploy feature branch to Render staging.
+3. Verify desktop, tablet, iOS, and Android capture behavior.
+4. Verify offline note and evidence synchronization on a physical device.
+5. Confirm Printing placement in generated draft reports.
+6. Complete user acceptance and promote to a new locked baseline.

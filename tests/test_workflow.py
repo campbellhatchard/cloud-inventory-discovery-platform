@@ -38,8 +38,11 @@ def test_full_capture_and_document_generation(admin_session):
     report = client.get(f"/api/reports/{report_id}")
     assert report.status_code == 200
     payload = report.json()
-    assert len(payload["sections"]) == 29
+    assert len(payload["sections"]) == 30
     receiving = next(s for s in payload["sections"] if s["process_module"] == "RECEIVING")
+    printing = next(s for s in payload["sections"] if s["process_module"] == "PRINTING")
+    assert printing["title"] == "Printing"
+    assert len(payload["prompts_by_module"]["PRINTING"]) == 18
     prompts = payload["prompts_by_module"]["RECEIVING"]
 
     response = client.put(
@@ -76,6 +79,9 @@ def test_full_capture_and_document_generation(admin_session):
         headers=h,
     )
     assert evidence.status_code == 200, evidence.text
+    refreshed = client.get(f"/api/reports/{report_id}").json()
+    refreshed_receiving = next(s for s in refreshed["sections"] if s["id"] == receiving["id"])
+    assert refreshed_receiving["state"] == "IN_PROGRESS"
 
     validation = client.post(f"/api/reports/{report_id}/validate", json={"final_requested": False}, headers=h)
     assert validation.status_code == 200

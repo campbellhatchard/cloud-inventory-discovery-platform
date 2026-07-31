@@ -931,6 +931,7 @@ async def upload_evidence(
 ):
     report = _get_report(db, report_id)
     require_report_access(db, user, report)
+    section = None
     if section_id:
         section = _get_section(db, section_id)
         if section.report_id != report.id:
@@ -969,6 +970,10 @@ async def upload_evidence(
         web_stored = storage.put_bytes(web_key, web_bytes, "image/jpeg")
         db.add(FileObject(evidence_id=item.id, prospect_id=report.prospect_id, storage_key=web_stored.key, variant="WEB", file_name=web_name, mime_type="image/jpeg", size_bytes=web_stored.size, sha256=web_stored.sha256, width=width, height=height, scan_state="NOT_CONFIGURED"))
     item.status = "READY"
+    if section:
+        section.state = "IN_PROGRESS" if section.state == "NOT_STARTED" else section.state
+        section.updated_by = user.id
+        section.version += 1
     _increment_report(report)
     audit(db, actor=user, action="EVIDENCE_UPLOADED", target_type="EVIDENCE", target_id=item.id, prospect_id=report.prospect_id, metadata={"report_id": report.id, "section_id": section_id, "file_name": filename, "size": len(data)})
     db.commit()

@@ -291,3 +291,25 @@ tr:last-child td { border-bottom: 0; }
   .report-layout { display: block; }
   .card { box-shadow: none; border: none; }
 }
+
+/* Quick Entry field-capture workspace */
+.quick-entry-layout { grid-template-columns: 260px minmax(0, 1fr); }
+.quick-entry-card { margin-bottom: 16px; }
+.quick-entry-area-card {
+  background: linear-gradient(135deg, #eaf8fb, #fff);
+  border-color: #a8dfe9;
+}
+.quick-entry-area { max-width: 520px; margin-bottom: 0; }
+.quick-entry-note { min-height: 220px; resize: vertical; }
+.quick-entry-submit { display: flex; justify-content: flex-end; }
+.quick-entry-submit .btn { min-width: 160px; }
+.quick-entry-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.quick-entry-actions .btn { min-width: 150px; min-height: 46px; }
+.hidden-file-input { display: none; }
+
+@media (max-width: 720px) {
+  .quick-entry-area-card { position: sticky; top: 114px; z-index: 18; }
+  .quick-entry-note { min-height: 260px; }
+  .quick-entry-submit .btn, .quick-entry-actions .btn { width: 100%; }
+  .quick-entry-actions { display: grid; grid-template-columns: 1fr; }
+}

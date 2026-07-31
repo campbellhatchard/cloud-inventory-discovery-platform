@@ -41,16 +41,16 @@ Multiple contributors may each have a report, or they may work in one report usi
 
 ## 3. Capture onsite observations
 
-### Quick mobile workflow
+### Quick Entry workflow
 
-1. Open the report on the phone/tablet.
-2. Choose the operational process.
-3. Enter a short observation or pain point.
-4. Add impact or follow-up detail where known.
-5. Take/upload a photograph.
-6. Add a specific caption explaining what the image proves.
+1. Open the report. Quick Entry is the first screen.
+2. Select the Area of Operation. The selection remains active for subsequent captures.
+3. Select the finding type and enter the field note in the large note area.
+4. Select **Capture Note**. Only the note clears; the operational area and finding type remain selected.
+5. Optionally enter a caption, then select **Take Photo** to invoke the native camera or **Choose File** to attach an existing image or document.
+6. Continue capturing notes and evidence. Change the Area of Operation only when the destination report section changes.
 
-The application saves drafts and queues changes during a transient connection loss. Confirm the sync indicator before leaving the site.
+Quick Entry routes each capture immediately into the selected detailed report section. **Other** routes to General Operational Observations. The application queues notes and evidence during a transient connection loss and retains the destination section selected at capture time. Confirm the sync indicator before leaving the site.
 
 ### Strong evidence pattern
 
@@ -73,7 +73,7 @@ Avoid writing a solution recommendation before the current process and problem a
 
 ## 4. Complete a process assessment
 
-For Receiving, Putaway, Transfer, Order Management, Picking, Packing, Shipping, Cycle Count Management, Work Orders, Field Inventory, and Manufacturing, use the standard structure:
+For Receiving, Putaway, Transfer, Order Management, Picking, Packing, Shipping, Cycle Count Management, Work Orders, Printing, Field Inventory, and Manufacturing, use the standard structure:
 
 1. Process purpose
 2. Participants and roles

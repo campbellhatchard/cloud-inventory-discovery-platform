@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.2.0
-**Status:** GitHub-ready, Render-ready implementation with a staging-first PowerShell deployment toolkit
+**Version:** 0.3.0
+**Status:** Feature build implemented and locally validated; awaiting Render staging deployment and user acceptance
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -20,8 +20,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Multiple reports per prospect and owner-controlled report merge with lineage
 - Standard and custom report sections
 - Guided questions plus free-form narrative capture
-- Quick field capture, browser autosave, and offline-safe IndexedDB queue
-- Photograph and attachment upload, image normalization, captions, placement control, and text extraction
+- Quick Entry field-capture screen with persistent operational routing, browser autosave, and offline-safe IndexedDB queue
+- Native-camera and attachment capture, image normalization, optional captions, automatic section placement, and text extraction
 - Findings, baseline metrics, approved capability mappings, qualitative and measurable benefits
 - Governed capability catalog and human-approved knowledge repository
 - Queued AI assistance with policy gating and mandatory human review
@@ -198,7 +198,7 @@ Do not enable confidential AI processing until the organization has verified tha
 - JSON
 - XML
 
-The application applies file-size limits, extension/content checks, safe filenames, private storage, and structural validation. It does **not** include an antivirus engine in v0.2.0. Deployments that require malware scanning must add an approved scanning service or quarantine gateway before wider production use.
+The application applies file-size limits, extension/content checks, safe filenames, private storage, and structural validation. It does **not** include an antivirus engine in v0.2.1. Deployments that require malware scanning must add an approved scanning service or quarantine gateway before wider production use.
 
 ## Repository guide
 
@@ -242,5 +242,10 @@ Before customer-confidential production use, the deploying organization must com
 - [Operations and retention](docs/OPERATIONS.md)
 - [User guide](docs/USER_GUIDE.md)
 - [Build status and acceptance evidence](docs/BUILD_STATUS.md)
-- [Release notes v0.2.0](docs/RELEASE_NOTES_v0.2.0.md)
+- [Quick Entry enhancement specification v0.3.0](docs/QUICK_ENTRY_SPEC_v0.3.0.md)
+- [Release notes v0.3.0](docs/RELEASE_NOTES_v0.3.0.md)
+- [Release notes v0.2.1 baseline](docs/RELEASE_NOTES_v0.2.1.md)
+- [Acceptance test report v0.2.1](docs/ACCEPTANCE_TEST_REPORT_v0.2.1.md)
+- [Baseline manifest v0.2.1](docs/BASELINE_MANIFEST_v0.2.1.md)
+- [Enhancement change template](docs/ENHANCEMENT_CHANGE_TEMPLATE.md)
 - [Generated OpenAPI schema](docs/openapi.json)

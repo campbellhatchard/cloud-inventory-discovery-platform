@@ -2,9 +2,9 @@
 title: "Cloud Inventory Site Discovery and Report Generation Platform"
 subtitle: "Complete Software Requirements and Reference Architecture Specification"
 author: "Cloud Inventory"
-date: "30 July 2026"
-version: "1.0"
-status: "Approved Baseline for Production Build"
+date: "31 July 2026"
+version: "1.1"
+status: "As-Built Staging Baseline - Software v0.2.1"
 ---
 
 # Document Control
@@ -33,7 +33,7 @@ The Denver report is the visual and structural acceptance benchmark. The older r
 
 ## 0.2 Versioning and Change Governance
 
-- This document is the **v1.0 baseline**. Every later change shall update the version, date, author, decision rationale, affected requirements, and migration impact.
+- This document is the **v1.1 as-built baseline** for software release v0.2.1. Every later change shall update the version, date, author, decision rationale, affected requirements, and migration impact.
 - Functional requirements use stable IDs (`FR-*`). Non-functional requirements use `NFR-*`; security requirements use `SEC-*`; AI requirements use `AI-*`; document requirements use `DOC-*`; acceptance criteria use `AC-*`.
 - Requirements shall not be silently removed. Deprecated requirements remain in the change log with replacement IDs.
 - The application shall display its software version and database schema version on the Admin > System page.
@@ -43,6 +43,61 @@ The Denver report is the visual and structural acceptance benchmark. The older r
 | Version | Date | Status | Summary |
 | --- | --- | --- | --- |
 | 1.0 | 30 July 2026 | Approved baseline | Initial complete specification based on six discovery reports, Advanced Inventory, and clarified product requirements. |
+| 1.1 | 31 July 2026 | As-built staging baseline | Records the validated and live Render staging implementation, deployment corrections, first-login password regression fix, accepted constraints, and canonical enhancement baseline. |
+
+## 0.3 As-Built Release Baseline - Software v0.2.1
+
+This revision records the first successfully validated and live staging build as the canonical enhancement baseline. It does not remove or weaken any requirement in this specification. It distinguishes requirements that are implemented, implemented with a deliberate limitation, or reserved for later enhancement.
+
+### Baseline identity
+
+| Item | Baseline value |
+| --- | --- |
+| Repository | `campbellhatchard/cloud-inventory-discovery-platform` |
+| Live branch | `staging` |
+| Locked baseline branch | `baseline-v0.2.1` |
+| Baseline commit | `7a36fa0527e97191fa46147e663b59dc8ef282f2` |
+| Software release | `0.2.1` |
+| Specification release | `1.1` |
+| Baseline date | 31 July 2026 |
+| Environment | Render staging, Ohio region |
+| Runtime | Docker web service and background worker |
+| Database | Render PostgreSQL |
+| Object storage | Private S3-compatible storage |
+| AI status | Disabled by default; confidential AI remains gated |
+
+### Validation and operational proof points
+
+- The complete automated suite passed, including authentication, first-login password change, cross-prospect authorization, collaboration, evidence upload, document generation, validation, retention, deletion, and AI review-state tests.
+- DOCX and PDF generation passed with LibreOffice Writer in the application container.
+- The Docker image built successfully on Render.
+- Alembic migration and seed loading completed through a dedicated Linux pre-deploy script.
+- The web service passed `/healthz` and `/readyz` checks and became live.
+- The administrator logged in, completed the forced password change, and entered the application successfully after the frontend event-delegation regression was corrected.
+
+### Incorporated stabilization corrections
+
+1. Updated `psycopg[binary]` to `3.2.13` for Python 3.14 Windows validation compatibility while retaining Render/Linux compatibility.
+2. Narrowed Ruff to deployment-critical `E` and `F` checks and preserved explicit exclusions rather than scanning virtual-environment dependencies.
+3. Made LibreOffice temporary-profile URIs cross-platform using `Path.as_uri()`.
+4. Replaced the compound Render pre-deploy string with `scripts/render-predeploy.sh`, which runs migrations and seeding as separate commands.
+5. Corrected password-modal event delegation by attaching delegated listeners to `document`, then refreshing authoritative `/api/auth/me` state after a password change.
+6. Advanced the service-worker cache and application release identity to `0.2.1`.
+
+### Accepted baseline constraints
+
+The following remain deliberate constraints rather than release defects:
+
+- The application is internal-only.
+- Confidential AI is disabled until approved zero-data-retention controls and credentials are configured.
+- Antivirus/malware scanning is not bundled.
+- PostgreSQL row-level security is not enabled; authorization is enforced in the application and covered by tests.
+- Backup and restore, target-device field acceptance, and organization-specific branding/legal approval remain environment and business acceptance activities.
+- Production deployment has not yet been approved; staging is the validated proving environment.
+
+### Enhancement change-control rule
+
+All enhancements shall branch from `baseline-v0.2.1` or a descendant that preserves this baseline. Each enhancement shall update the software version, affected requirement IDs, migration impact, security impact, test evidence, deployment instructions, and change log. The baseline branch is not to be force-pushed or used for experimental work.
 
 # 1. Executive Summary
 
@@ -1932,3 +1987,43 @@ Each pull request shall include requirement IDs, migrations, tests, screenshots/
 - Cloudflare R2 documentation. R2 provides an S3-compatible object-storage API and publishes storage/operation pricing with no direct egress charge.
 
 Current vendor behavior, pricing, eligibility, and product settings shall be revalidated during implementation and before production approval.
+
+
+# 29. Controlled Enhancement Delta — Quick Entry v0.3.0
+
+## 29.1 Change Control
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.3.0` |
+| Specification delta | `v1.2` |
+| Source baseline | `baseline-v0.2.1` |
+| Development branch | `feature/quick-entry-v0.3.0` |
+| Database revision | `e3b7c1a9d2f4` |
+| Status | Implemented and locally validated; staging acceptance pending |
+
+## 29.2 Quick Entry Requirements
+
+- **FR-QE-001:** Opening a report without an explicit section shall display Quick Entry before Opportunity Overview.
+- **FR-QE-002:** Quick Entry shall not be represented as a report section and shall be excluded from publication and final validation.
+- **FR-QE-003:** The Area of Operation selector shall provide Receiving, Putaway, Transfer, Order Management, Picking, Packing, Shipping, Cycle Count, Work Orders, Printing, and Other.
+- **FR-QE-004:** The selected area shall persist across multiple captures and browser refreshes on a per-report basis.
+- **FR-QE-005:** Other shall route to General Operational Observations.
+- **FR-QE-006:** Quick Field Capture shall provide finding type and a large multiline note field. Successful capture shall clear only the note.
+- **FR-QE-007:** Notes shall be created as standard Findings in the selected destination section.
+- **FR-QE-008:** Quick Entry shall provide separate Take Photo and Choose File controls.
+- **FR-QE-009:** Take Photo shall request the environment-facing native camera where the device/browser supports it.
+- **FR-QE-010:** Evidence captions shall be optional. Placement shall not be presented to the field user.
+- **FR-QE-011:** Evidence shall be stored inline against the selected destination section using existing security, storage, normalization, extraction, and audit controls.
+- **FR-QE-012:** The section ID resolved at capture time shall be retained in offline queue items.
+- **FR-QE-013:** Section-level quick-note and upload forms shall be removed to avoid competing field workflows.
+- **FR-QE-014:** Detailed sections shall continue to display routed findings and evidence and retain review/refinement controls.
+- **FR-QE-015:** A standard Printing section with the standard process prompt set shall be inserted after Work Orders.
+- **FR-QE-016:** Non-finalized reports shall receive Printing through migration; finalized reports shall not be modified.
+- **FR-QE-017:** A note or evidence capture shall move a destination section from `NOT_STARTED` to `IN_PROGRESS`.
+
+## 29.3 Verification
+
+The v0.3.0 feature build passed 20 automated tests, Python compilation, JavaScript syntax validation, OpenAPI generation, document-generation regression, and a migration simulation proving that draft reports receive Printing while finalized reports remain unchanged. Physical-device camera and offline acceptance remain staging gates.
+
+The detailed interaction contract is maintained in `docs/QUICK_ENTRY_SPEC_v0.3.0.md`.

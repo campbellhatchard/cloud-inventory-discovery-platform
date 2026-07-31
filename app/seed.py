@@ -49,14 +49,15 @@ SECTIONS = [
     (190, "shipping", "Shipping", "SHIPPING", False, True),
     (200, "cycle-count", "Cycle Count Management", "CYCLE_COUNT", False, True),
     (210, "work-orders", "Work Orders", "WORK_ORDERS", False, True),
-    (220, "field-inventory", "Field Inventory", "FIELD_INVENTORY", False, True),
-    (230, "manufacturing", "Manufacturing", "MANUFACTURING", False, True),
-    (240, "cross-process", "Cross-Process Findings and Dependencies", None, False, True),
-    (250, "recommended-capabilities", "Recommended Cloud Inventory Capabilities", None, False, True),
-    (260, "expected-benefits", "Expected Benefits", None, False, True),
-    (270, "risks-assumptions", "Risks, Assumptions, and Prerequisites", None, False, True),
-    (280, "next-steps", "Recommended Next Steps", None, False, True),
-    (290, "supporting-evidence", "Supporting Evidence and Attachments", None, False, True),
+    (220, "printing", "Printing", "PRINTING", False, True),
+    (230, "field-inventory", "Field Inventory", "FIELD_INVENTORY", False, True),
+    (240, "manufacturing", "Manufacturing", "MANUFACTURING", False, True),
+    (250, "cross-process", "Cross-Process Findings and Dependencies", None, False, True),
+    (260, "recommended-capabilities", "Recommended Cloud Inventory Capabilities", None, False, True),
+    (270, "expected-benefits", "Expected Benefits", None, False, True),
+    (280, "risks-assumptions", "Risks, Assumptions, and Prerequisites", None, False, True),
+    (290, "next-steps", "Recommended Next Steps", None, False, True),
+    (300, "supporting-evidence", "Supporting Evidence and Attachments", None, False, True),
 ]
 
 GENERAL_PROMPTS = [
@@ -123,7 +124,7 @@ def seed() -> None:
         for order, stable, question, answer_type, priority, required in GENERAL_PROMPTS:
             if not db.scalar(select(PromptDefinition).where(PromptDefinition.process_module.is_(None), PromptDefinition.stable_key == stable, PromptDefinition.version == 1)):
                 db.add(PromptDefinition(process_module=None, stable_key=stable, question=question, answer_type=answer_type, display_order=order, mobile_priority=priority, required_on_final=required, version=1))
-        for module in ["RECEIVING", "PUTAWAY", "TRANSFER", "ORDER_MANAGEMENT", "PICKING", "PACKING", "SHIPPING", "CYCLE_COUNT", "WORK_ORDERS", "FIELD_INVENTORY", "MANUFACTURING"]:
+        for module in ["RECEIVING", "PUTAWAY", "TRANSFER", "ORDER_MANAGEMENT", "PICKING", "PACKING", "SHIPPING", "CYCLE_COUNT", "WORK_ORDERS", "PRINTING", "FIELD_INVENTORY", "MANUFACTURING"]:
             for order, stable, question, answer_type, priority, required in PROCESS_PROMPTS:
                 if not db.scalar(select(PromptDefinition).where(PromptDefinition.process_module == module, PromptDefinition.stable_key == stable, PromptDefinition.version == 1)):
                     db.add(PromptDefinition(process_module=module, stable_key=stable, question=question, answer_type=answer_type, display_order=order, mobile_priority=priority, required_on_final=required, version=1))

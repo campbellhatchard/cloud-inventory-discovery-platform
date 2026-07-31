@@ -1,0 +1,48 @@
+name: CI
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install -y libreoffice-writer fonts-liberation
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -q
+      - run: python -m compileall app
+      - run: node --check app/static/app.js
+      - name: Parse Render YAML
+        run: python -c "import pathlib, yaml; data=yaml.safe_load(pathlib.Path('render.yaml').read_text()); assert data and 'projects' in data"
+      - name: Parse PowerShell deployment scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in @('Deploy.ps1', 'scripts/Deploy-CloudInventoryDiscovery.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              $errors | ForEach-Object { Write-Error "${path}: $($_.Message)" }
+            }
+          }
+          if ($failed) { exit 1 }
+      - name: Scan for prohibited bootstrap password literal
+        shell: bash
+        run: |
+          if grep -R --exclude-dir=.git --exclude-dir=.venv --exclude-dir=deployment-output -F "CloudInventory""2026!" .; then
+            echo "Prohibited bootstrap password literal found in repository."
+            exit 1
+          fi

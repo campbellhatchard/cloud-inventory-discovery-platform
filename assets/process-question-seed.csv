@@ -1,0 +1,234 @@
+process,question_order,question,field_priority,required_on_final_default
+Receiving,1,What is the purpose of this process and where does it begin and end?,high,false
+Receiving,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Receiving,3,What event triggers the process and what inputs must be available?,high,false
+Receiving,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Receiving,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Receiving,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Receiving,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Receiving,8,What is working well and should be preserved?,normal,false
+Receiving,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Receiving,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Receiving,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Receiving,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Receiving,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Receiving,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Receiving,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Receiving,16,"What inbound order types are received: purchase, transfer, customer return, non-stock, miscellaneous, or third-party goods?",normal,false
+Receiving,17,"How are appointments, vehicles, security, dock access, and unloading coordinated?",normal,false
+Receiving,18,"How is expected-versus-received quantity verified and how are overages, shortages, damage, and substitutions handled?",normal,false
+Receiving,19,"Which item, supplier, alternate, GTIN, lot, serial, expiry, owner, job, country-of-origin, or UOM identifiers are captured?",normal,false
+Receiving,20,Where is inventory staged after receipt and when does it become available?,normal,false
+Receiving,21,"Are inspections, quarantine, quality dispositions, holds, or document approvals required?",normal,false
+Receiving,22,"How are labels, license plates/IHUs, receipt documents, and third-party notifications produced?",normal,false
+Receiving,23,"How long is dock-to-system receipt and dock-to-stock, and what causes variance?",normal,false
+Putaway,1,What is the purpose of this process and where does it begin and end?,high,false
+Putaway,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Putaway,3,What event triggers the process and what inputs must be available?,high,false
+Putaway,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Putaway,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Putaway,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Putaway,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Putaway,8,What is working well and should be preserved?,normal,false
+Putaway,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Putaway,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Putaway,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Putaway,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Putaway,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Putaway,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Putaway,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Putaway,16,"How is the destination selected: fixed, operator knowledge, printed instruction, suggested, or system-directed?",normal,false
+Putaway,17,"What location, zone, capacity, mixing, owner, lot, status, temperature, security, and equipment rules apply?",normal,false
+Putaway,18,"Is inventory moved loose, on a pallet/license plate/IHU, in a cart, or through cross-dock?",normal,false
+Putaway,19,How are from/to locations and inventory identity confirmed?,normal,false
+Putaway,20,"How are overflow, reserve, temporary, blocked, or full locations handled?",normal,false
+Putaway,21,"What is receipt-to-putaway time, travel distance, and frequency of incorrect location placement?",normal,false
+Transfer,1,What is the purpose of this process and where does it begin and end?,high,false
+Transfer,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Transfer,3,What event triggers the process and what inputs must be available?,high,false
+Transfer,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Transfer,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Transfer,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Transfer,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Transfer,8,What is working well and should be preserved?,normal,false
+Transfer,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Transfer,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Transfer,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Transfer,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Transfer,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Transfer,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Transfer,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Transfer,16,"Which transfers occur: bin-to-bin, warehouse-to-warehouse, owner/job change, replenishment, staging, field, or intercompany?",normal,false
+Transfer,17,What authorizes the transfer and when is an order required?,normal,false
+Transfer,18,"How are in-transit status, shipment, receipt confirmation, loss, damage, and partial quantities handled?",normal,false
+Transfer,19,Can intact handling units be moved and are nested containers used?,normal,false
+Transfer,20,"What location/warehouse restrictions, reason codes, and audit requirements apply?",normal,false
+Transfer,21,How are urgent or unplanned movements recorded?,normal,false
+Order Management,1,What is the purpose of this process and where does it begin and end?,high,false
+Order Management,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Order Management,3,What event triggers the process and what inputs must be available?,high,false
+Order Management,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Order Management,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Order Management,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Order Management,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Order Management,8,What is working well and should be preserved?,normal,false
+Order Management,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Order Management,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Order Management,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Order Management,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Order Management,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Order Management,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Order Management,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Order Management,16,Which outbound order types exist and where are they created?,normal,false
+Order Management,17,How do orders enter the warehouse system and how often are they synchronized?,normal,false
+Order Management,18,"How are allocation, reservation, priority, hold, release, cut-off, route, customer, and ship-date decisions made?",normal,false
+Order Management,19,"Are partial allocations, backorders, substitutions, short shipment, cancellations, or changes allowed?",normal,false
+Order Management,20,"How are waves/batches created, sequenced, released, and monitored?",normal,false
+Order Management,21,What administration and supervisor effort is required before work reaches operators?,normal,false
+Picking,1,What is the purpose of this process and where does it begin and end?,high,false
+Picking,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Picking,3,What event triggers the process and what inputs must be available?,high,false
+Picking,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Picking,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Picking,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Picking,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Picking,8,What is working well and should be preserved?,normal,false
+Picking,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Picking,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Picking,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Picking,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Picking,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Picking,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Picking,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Picking,16,"Which methods are used: single order, batch, wave, zone, cluster/cart, full pallet, case, each, work order, or field pick?",normal,false
+Picking,17,How are operators directed and how is travel sequence determined?,normal,false
+Picking,18,"How are item, location, lot/serial, UOM, owner, job, and quantity validated?",normal,false
+Picking,19,"Where is picked inventory placed: tote/IHU, cart, pallet, pack location, staging, technician counter, or vehicle?",normal,false
+Picking,20,"How are shorts, unexpected inventory, damaged product, overrides, and replenishment triggers handled?",normal,false
+Picking,21,"What are lines/hour, travel time, error rate, re-picks, and supervisor intervention?",normal,false
+Packing,1,What is the purpose of this process and where does it begin and end?,high,false
+Packing,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Packing,3,What event triggers the process and what inputs must be available?,high,false
+Packing,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Packing,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Packing,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Packing,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Packing,8,What is working well and should be preserved?,normal,false
+Packing,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Packing,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Packing,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Packing,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Packing,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Packing,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Packing,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Packing,16,Is packing a distinct validation step or only physical consolidation?,normal,false
+Packing,17,"How are cartons/outbound packing units selected, created, weighed, dimensioned, nested, and closed?",normal,false
+Packing,18,"How are serials, lots, UOM, quantities, documents, compliance inserts, and special instructions validated?",normal,false
+Packing,19,"Are cartonization, check-weighing, value-added services, or customer-specific labeling needed?",normal,false
+Packing,20,"How are packing errors, repacks, shortages, damages, and unpack/rework handled?",normal,false
+Packing,21,What is pick-to-pack and pack-to-ship time?,normal,false
+Shipping,1,What is the purpose of this process and where does it begin and end?,high,false
+Shipping,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Shipping,3,What event triggers the process and what inputs must be available?,high,false
+Shipping,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Shipping,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Shipping,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Shipping,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Shipping,8,What is working well and should be preserved?,normal,false
+Shipping,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Shipping,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Shipping,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Shipping,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Shipping,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Shipping,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Shipping,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Shipping,16,"How are shipments created, consolidated, manifested, staged, loaded, and confirmed?",normal,false
+Shipping,17,"Which carriers, parcel/TMS systems, routes, customer pickups, or internal vehicles are used?",normal,false
+Shipping,18,"What labels, bills of lading, packing lists, tracking numbers, seals, and compliance documents are required?",normal,false
+Shipping,19,How are freight rates/service levels selected and returned to the host system?,normal,false
+Shipping,20,"How are load verification, missed cartons, short shipment, partial shipment, and proof of dispatch managed?",normal,false
+Shipping,21,What is on-time dispatch performance and where do queues occur?,normal,false
+Cycle Count Management,1,What is the purpose of this process and where does it begin and end?,high,false
+Cycle Count Management,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Cycle Count Management,3,What event triggers the process and what inputs must be available?,high,false
+Cycle Count Management,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Cycle Count Management,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Cycle Count Management,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Cycle Count Management,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Cycle Count Management,8,What is working well and should be preserved?,normal,false
+Cycle Count Management,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Cycle Count Management,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Cycle Count Management,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Cycle Count Management,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Cycle Count Management,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Cycle Count Management,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Cycle Count Management,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Cycle Count Management,16,"How are counts selected: annual, ad hoc, ABC, location, item, variance-triggered, or event-triggered?",normal,false
+Cycle Count Management,17,"Are counts blind or directed, and can operations continue during counting?",normal,false
+Cycle Count Management,18,"How are loose, lot, serial, and handling-unit inventory counted?",normal,false
+Cycle Count Management,19,"How are unexpected/missing inventory, recounts, approvals, reason codes, and ERP adjustments managed?",normal,false
+Cycle Count Management,20,Who investigates variances and what transaction/user/location history is available?,normal,false
+Cycle Count Management,21,"What are count effort, operational downtime, variance rate, adjustment value, and location accuracy?",normal,false
+Work Orders,1,What is the purpose of this process and where does it begin and end?,high,false
+Work Orders,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Work Orders,3,What event triggers the process and what inputs must be available?,high,false
+Work Orders,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Work Orders,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Work Orders,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Work Orders,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Work Orders,8,What is working well and should be preserved?,normal,false
+Work Orders,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Work Orders,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Work Orders,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Work Orders,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Work Orders,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Work Orders,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Work Orders,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Work Orders,16,"Which work order types consume, reserve, kit, repair, produce, or return inventory?",normal,false
+Work Orders,17,"How are material requirements created, allocated, picked, staged, issued, returned, and closed?",normal,false
+Work Orders,18,"Are owner, job, job cost code, asset, technician, operation, or cost center captured?",normal,false
+Work Orders,19,"How are shortages, substitutions, emergency issues, non-stock items, cores/repairables, and unused materials handled?",normal,false
+Work Orders,20,"Are materials issued manually, preflushed, backflushed, at pay points, or treated as floor stock?",normal,false
+Work Orders,21,What effect does material availability/searching have on technician wrench time or production uptime?,normal,false
+Field Inventory,1,What is the purpose of this process and where does it begin and end?,high,false
+Field Inventory,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Field Inventory,3,What event triggers the process and what inputs must be available?,high,false
+Field Inventory,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Field Inventory,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Field Inventory,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Field Inventory,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Field Inventory,8,What is working well and should be preserved?,normal,false
+Field Inventory,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Field Inventory,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Field Inventory,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Field Inventory,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Field Inventory,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Field Inventory,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Field Inventory,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Field Inventory,16,"Where is field inventory held: technician, truck, van, job site, customer site, consignment, route, or remote store?",normal,false
+Field Inventory,17,"How is inventory assigned, transferred, replenished, counted, consumed, adjusted, and returned?",normal,false
+Field Inventory,18,Which transactions must work without connectivity and how long can devices remain offline?,normal,false
+Field Inventory,19,How are device/user/site conflicts and duplicate offline submissions resolved?,normal,false
+Field Inventory,20,"What proof, reason code, customer/job/asset reference, location, photo, or signature is required?",normal,false
+Field Inventory,21,"What are shrinkage, stockout, emergency purchase, return, and technician travel baselines?",normal,false
+Manufacturing,1,What is the purpose of this process and where does it begin and end?,high,false
+Manufacturing,2,"Who performs, supervises, approves, or depends on the process?",high,false
+Manufacturing,3,What event triggers the process and what inputs must be available?,high,false
+Manufacturing,4,"Describe the actual steps observed, including sequence, handoffs, queues, and waiting.",high,false
+Manufacturing,5,"Which systems, screens, spreadsheets, paper forms, labels, scanners, printers, or devices are used?",high,false
+Manufacturing,6,"What information is captured, by whom, at what point, and how is it validated?",high,false
+Manufacturing,7,"What volumes, frequencies, seasonal peaks, cut-off times, and service targets apply?",normal,false
+Manufacturing,8,What is working well and should be preserved?,normal,false
+Manufacturing,9,"Which exceptions, workarounds, rework loops, or supervisor interventions occur?",normal,false
+Manufacturing,10,"Where do errors, delays, searching, duplicate entry, congestion, or lost visibility occur?",normal,false
+Manufacturing,11,What is the operational/customer/safety/compliance/financial effect of the problem?,normal,false
+Manufacturing,12,What baseline evidence exists and what additional measurement is needed?,normal,false
+Manufacturing,13,"Which photos, forms, labels, screenshots, maps, or reports demonstrate the current practice?",high,false
+Manufacturing,14,"What future outcome does the prospect want, and how would success be measured?",normal,false
+Manufacturing,15,"What assumptions, integration dependencies, policy constraints, or physical constraints must be validated?",normal,false
+Manufacturing,16,"What products, raw materials, intermediates/WIP, co-products, by-products, and finished goods are managed?",normal,false
+Manufacturing,17,"How are BOMs, routings, work centers, operations, schedules, and work orders defined?",normal,false
+Manufacturing,18,"How are raw materials reserved, staged, issued, substituted, returned, and traced?",normal,false
+Manufacturing,19,"How are production completions, over/under completion, scrap, quality, lots/serials, and expiry captured?",normal,false
+Manufacturing,20,"Which issue methods are used: manual, preflush, backflush at pay point/final pay point, floor stock, or non-stock?",normal,false
+Manufacturing,21,"How are WIP locations, handling units, job/cost, labor, downtime, and consumption variances controlled?",normal,false

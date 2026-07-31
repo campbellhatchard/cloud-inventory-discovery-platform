@@ -1,0 +1,11 @@
+{
+  "name": "Cloud Inventory Site Discovery",
+  "short_name": "CI Discovery",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f9",
+  "theme_color": "#1f3447",
+  "icons": [
+    {"src": "/static/cloud-inventory-logo.png", "sizes": "any", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

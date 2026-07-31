@@ -1,0 +1,195 @@
+# User Guide
+
+## Roles
+
+### Contributor
+
+Captures discovery notes, answers prompts, uploads evidence, records findings and metrics, and edits authorized report sections.
+
+### Reviewer
+
+Reviews and approves AI drafts, capability mappings, benefit statements, and supporting-evidence inclusion.
+
+### Owner
+
+Controls report structure, assignments, merge, validation, final publication, archive, and eligible report deletion.
+
+### Administrator
+
+Manages users, capabilities, knowledge, branding, audit, and retention/deletion.
+
+## 1. Create a prospect workspace
+
+1. Open **Prospects**.
+2. Select **New prospect**.
+3. Enter the prospect name, industry, and opportunity context.
+4. Add one or more sites.
+5. Create an engagement with survey date and objectives.
+6. Add members and assign the appropriate role.
+
+Each prospect is isolated. Do not combine unrelated customer information in one prospect workspace.
+
+## 2. Create reports for contributors
+
+1. Open the prospect.
+2. Create a report from the standard discovery template.
+3. Add report members.
+4. Set the report owner.
+5. Assign sections to contributors.
+
+Multiple contributors may each have a report, or they may work in one report using section assignments. Separate reports are useful when contributors need independent field capture before consolidation.
+
+## 3. Capture onsite observations
+
+### Quick mobile workflow
+
+1. Open the report on the phone/tablet.
+2. Choose the operational process.
+3. Enter a short observation or pain point.
+4. Add impact or follow-up detail where known.
+5. Take/upload a photograph.
+6. Add a specific caption explaining what the image proves.
+
+The application saves drafts and queues changes during a transient connection loss. Confirm the sync indicator before leaving the site.
+
+### Strong evidence pattern
+
+Capture:
+
+```text
+What happens now
+Why it happens
+Who performs it
+Systems/documents used
+Frequency/volume
+Exception or workaround
+Operational impact
+Customer language
+Photograph or source evidence
+Open question
+```
+
+Avoid writing a solution recommendation before the current process and problem are adequately evidenced.
+
+## 4. Complete a process assessment
+
+For Receiving, Putaway, Transfer, Order Management, Picking, Packing, Shipping, Cycle Count Management, Work Orders, Field Inventory, and Manufacturing, use the standard structure:
+
+1. Process purpose
+2. Participants and roles
+3. Trigger and inputs
+4. Current process steps
+5. Systems and documents
+6. Inventory/data captured
+7. Exceptions and workarounds
+8. Volumes/frequencies/service levels
+9. Controls
+10. Pain points
+11. Impact
+12. Evidence
+13. Cloud Inventory functionality
+14. Proposed future process
+15. Benefits
+16. Assumptions/dependencies
+17. Open questions
+18. Confidence/evidence rating
+
+Irrelevant sections may be removed only by the owner. A contributor can add a custom section but cannot remove standard content.
+
+## 5. Collaborate and review
+
+- Use **Assign** to give a section to a report member.
+- Use comments for questions that must be resolved before finalization.
+- Resolve comments only after the issue is addressed.
+- If a save reports a version conflict, reload the current section and reconcile changes; do not overwrite another contributor blindly.
+
+## 6. Merge reports
+
+The owner:
+
+1. selects the target consolidated report;
+2. selects source reports from the same prospect;
+3. runs merge and reviews conflicts;
+4. verifies cloned evidence and findings;
+5. chooses whether source reports enter the recovery/deletion lifecycle.
+
+The target report records source lineage. Merge should not be treated as automatic editorial reconciliation.
+
+## 7. Map Cloud Inventory capabilities
+
+1. Create or confirm a finding.
+2. Select an **approved** capability.
+3. Explain why the capability addresses the finding.
+4. Record prerequisites and limitations.
+5. Submit for reviewer approval.
+
+Only approved catalog capabilities can be mapped. A capability record is evidence of product functionality, not proof that it is licensed, configured, integrated, or in project scope.
+
+## 8. Capture benefits and baselines
+
+Benefits may be qualitative or measurable. For a measurable benefit, capture:
+
+- baseline value;
+- unit and period;
+- evidence/source;
+- calculation or comparison method;
+- assumptions;
+- confidence.
+
+Do not state guaranteed improvement percentages without an evidenced calculation and commercial approval.
+
+## 9. Use AI assistance
+
+AI is available only when enabled by administrators and privacy policy.
+
+1. Select a report/section.
+2. request the relevant assistance type;
+3. continue working while the queued job runs;
+4. review the pending suggestion;
+5. verify every customer fact and capability reference;
+6. approve, reject, or revise.
+
+Approved suggestions may add narrative, capability mappings, or benefits. AI output is not authoritative and is never included automatically.
+
+## 10. Validate and publish
+
+### Draft
+
+Draft validation reports warnings and errors but generation is allowed. Draft outputs display the configured `DRAFT - CONFIDENTIAL` watermark.
+
+### Final
+
+Final generation is blocked when mandatory content, approvals, evidence, or open issues remain. The owner may delete a genuinely non-applicable section rather than inserting placeholder text.
+
+Available publication types:
+
+- Full Site Discovery Report
+- Solution Demonstration Brief
+- Customer Follow-up Questionnaire
+
+Download and review the final PDF before sending it to a customer. Retain the editable DOCX as the controlled source artifact.
+
+## 11. Branding administration
+
+Administrators can manage:
+
+- customer/Cloud Inventory logos;
+- heading/body fonts;
+- primary, secondary, and accent colors;
+- confidentiality statement;
+- draft watermark;
+- footer text.
+
+Test both DOCX and PDF after any branding change.
+
+## 12. Archive and retention
+
+When an opportunity closes:
+
+1. generate any required final output;
+2. export the prospect workspace;
+3. verify the ZIP;
+4. archive the prospect;
+5. follow the retention review process when due.
+
+Permanent deletion is an administrator-controlled, audited action and cannot be reversed from the application.

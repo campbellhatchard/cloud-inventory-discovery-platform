@@ -17,7 +17,7 @@ projects:
             dockerfilePath: ./Dockerfile
             dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
             healthCheckPath: /readyz
-            preDeployCommand: /bin/sh -c 'alembic upgrade head && python -m app.seed'
+            preDeployCommand: /bin/sh scripts/render-predeploy.sh
             envVars:
               - key: ENVIRONMENT
                 value: production

@@ -51,6 +51,18 @@ class EngagementCreate(BaseModel):
     objectives: str | None = None
 
 
+class ProspectOnboardingEngagement(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    survey_date: date | None = None
+    objectives: str | None = None
+
+
+class ProspectOnboardingCreate(BaseModel):
+    prospect: ProspectCreate
+    site: SiteCreate | None = None
+    engagement: ProspectOnboardingEngagement | None = None
+
+
 class ReportCreate(BaseModel):
     title: str = Field(min_length=1, max_length=250)
     engagement_id: str

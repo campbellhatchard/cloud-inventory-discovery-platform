@@ -1093,6 +1093,76 @@
         "title": "ProspectDeleteRequest",
         "type": "object"
       },
+      "ProspectOnboardingCreate": {
+        "properties": {
+          "engagement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProspectOnboardingEngagement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prospect": {
+            "$ref": "#/components/schemas/ProspectCreate"
+          },
+          "site": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteCreate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "prospect"
+        ],
+        "title": "ProspectOnboardingCreate",
+        "type": "object"
+      },
+      "ProspectOnboardingEngagement": {
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "objectives": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objectives"
+          },
+          "survey_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Survey Date"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProspectOnboardingEngagement",
+        "type": "object"
+      },
       "PublicationRequest": {
         "properties": {
           "is_final": {
@@ -1580,7 +1650,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2436,6 +2506,42 @@
           }
         },
         "summary": "Create Prospect"
+      }
+    },
+    "/api/prospects/onboard": {
+      "post": {
+        "operationId": "onboard_prospect_api_prospects_onboard_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProspectOnboardingCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Onboard Prospect"
       }
     },
     "/api/prospects/{prospect_id}": {

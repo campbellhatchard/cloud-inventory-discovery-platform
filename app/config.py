@@ -1,62 +1,11 @@
 from __future__ import annotations
 
-import os
-import shutil
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-def _default_libreoffice_path() -> str:
-    configured = os.environ.get("LIBREOFFICE_PATH")
-    if configured:
-        return configured
-
-    for command in ("libreoffice", "soffice"):
-        resolved = shutil.which(command)
-        if resolved:
-            return resolved
-
-    if os.name == "nt":
-        candidates = (
-            Path(
-                os.environ.get(
-                    "PROGRAMFILES",
-                    r"C:\Program Files",
-                )
-            )
-            / "LibreOffice"
-            / "program"
-            / "soffice.exe",
-            Path(
-                os.environ.get(
-                    "PROGRAMFILES(X86)",
-                    r"C:\Program Files (x86)",
-                )
-            )
-            / "LibreOffice"
-            / "program"
-            / "soffice.exe",
-        )
-
-        for candidate in candidates:
-            if candidate.exists():
-                return str(candidate)
-
-        return "soffice.exe"
-
-    return "/usr/bin/libreoffice"
-
-
-def _default_document_work_dir() -> Path:
-    if os.name == "nt":
-        return Path(tempfile.gettempdir()) / "ci-discovery-documents"
-
-    return Path("/tmp/ci-discovery-documents")
 
 
 class Settings(BaseSettings):
@@ -66,7 +15,7 @@ class Settings(BaseSettings):
     deployment_environment: Literal["local", "staging", "production"] = "local"
     app_component: Literal["web", "worker"] = "web"
     app_name: str = "Cloud Inventory Site Discovery"
-    app_version: str = "0.3.0"
+    app_version: str = "0.4.0"
     app_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./discovery.db"
     session_cookie_name: str = "ci_discovery_session"
@@ -96,12 +45,8 @@ class Settings(BaseSettings):
         "standard-disabled-for-confidential"
     )
 
-    libreoffice_path: str = Field(
-        default_factory=_default_libreoffice_path
-    )
-    document_work_dir: Path = Field(
-        default_factory=_default_document_work_dir
-    )
+    libreoffice_path: str = "/usr/bin/libreoffice"
+    document_work_dir: Path = Path("/tmp/ci-discovery-documents")
     job_poll_seconds: float = 2.0
     maintenance_interval_seconds: int = 3600
     retention_warning_days: int = 30

@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.3.0
-**Status:** Feature build implemented and locally validated; awaiting Render staging deployment and user acceptance
+**Version:** 0.4.0
+**Status:** Prospect onboarding and brand asset enhancement build; awaiting Render staging deployment and user acceptance
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -18,6 +18,9 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Contributor, reviewer, owner, and administrator roles
 - Prospect-level isolation, report membership, section assignment, comments, and optimistic concurrency
 - Multiple reports per prospect and owner-controlled report merge with lineage
+- Guided prospect creation with optional site and engagement creation
+- Browser-defaulted IANA timezone selection for sites
+- Context-correct full-colour and negative Cloud Inventory logos
 - Standard and custom report sections
 - Guided questions plus free-form narrative capture
 - Quick Entry field-capture screen with persistent operational routing, browser autosave, and offline-safe IndexedDB queue
@@ -198,7 +201,7 @@ Do not enable confidential AI processing until the organization has verified tha
 - JSON
 - XML
 
-The application applies file-size limits, extension/content checks, safe filenames, private storage, and structural validation. It does **not** include an antivirus engine in v0.2.1. Deployments that require malware scanning must add an approved scanning service or quarantine gateway before wider production use.
+The application applies file-size limits, extension/content checks, safe filenames, private storage, and structural validation. It does **not** include an antivirus engine in v0.4.0. Deployments that require malware scanning must add an approved scanning service or quarantine gateway before wider production use.
 
 ## Repository guide
 
@@ -242,6 +245,8 @@ Before customer-confidential production use, the deploying organization must com
 - [Operations and retention](docs/OPERATIONS.md)
 - [User guide](docs/USER_GUIDE.md)
 - [Build status and acceptance evidence](docs/BUILD_STATUS.md)
+- [Prospect onboarding and branding specification v0.4.0](docs/PROSPECT_ONBOARDING_SPEC_v0.4.0.md)
+- [Release notes v0.4.0](docs/RELEASE_NOTES_v0.4.0.md)
 - [Quick Entry enhancement specification v0.3.0](docs/QUICK_ENTRY_SPEC_v0.3.0.md)
 - [Release notes v0.3.0](docs/RELEASE_NOTES_v0.3.0.md)
 - [Release notes v0.2.1 baseline](docs/RELEASE_NOTES_v0.2.1.md)

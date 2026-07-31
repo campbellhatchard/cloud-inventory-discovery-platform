@@ -26,6 +26,39 @@ const fmtDate = value => value ? new Intl.DateTimeFormat(undefined, {year:'numer
 const bytes = n => !n ? '0 B' : `${(n / (n > 1048576 ? 1048576 : 1024)).toFixed(1)} ${n > 1048576 ? 'MB' : 'KB'}`;
 const uid = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 
+const FALLBACK_TIMEZONES = [
+  'America/Anchorage','America/Chicago','America/Denver','America/Detroit','America/Indiana/Indianapolis',
+  'America/Los_Angeles','America/New_York','America/Phoenix','America/Puerto_Rico','America/Toronto','America/Vancouver',
+  'Australia/Adelaide','Australia/Brisbane','Australia/Darwin','Australia/Hobart','Australia/Melbourne','Australia/Perth','Australia/Sydney',
+  'Europe/Guernsey','Europe/Isle_of_Man','Europe/Jersey','Europe/London',
+  'Pacific/Auckland','UTC',
+];
+function browserTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+  catch { return ''; }
+}
+function availableTimezones() {
+  let zones = [];
+  try {
+    zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  } catch { zones = []; }
+  const browser = browserTimezone();
+  return [...new Set([...zones, ...FALLBACK_TIMEZONES, ...(browser ? [browser] : [])])].sort((a,b) => a.localeCompare(b));
+}
+function timezoneOptions(selected = browserTimezone()) {
+  return `<option value="">Select timezone</option>${availableTimezones().map(zone => `<option value="${esc(zone)}" ${zone === selected ? 'selected' : ''}>${esc(zone.replaceAll('_',' '))}</option>`).join('')}`;
+}
+function setOnboardingSectionEnabled(checkbox) {
+  const target = document.getElementById(checkbox.dataset.target);
+  if (!target) return;
+  target.classList.toggle('hidden', !checkbox.checked);
+  for (const field of target.querySelectorAll('input, textarea, select')) {
+    field.disabled = !checkbox.checked;
+    if (field.dataset.onboardingRequired === 'true') field.required = checkbox.checked;
+  }
+}
+
+
 
 const QUICK_ENTRY_AREAS = [
   {value:'RECEIVING', label:'Receiving'},
@@ -134,7 +167,7 @@ function shell(content, active = 'prospects') {
   <div class="app-shell">
     <header class="topbar">
       <div class="brand" data-action="go" data-route="#/prospects" role="button" tabindex="0">
-        <img src="/static/cloud-inventory-logo.png" alt="Cloud Inventory">
+        <img class="logo-on-dark" src="/static/cloud-inventory-logo-negative.png" alt="Cloud Inventory">
         <span class="brand-title">Site Discovery</span>
       </div>
       <nav class="topnav" aria-label="Primary navigation">
@@ -160,7 +193,7 @@ function renderLogin(message = '') {
   app.innerHTML = `
     <main class="login-page">
       <section class="login-card">
-        <img class="login-logo" src="/static/cloud-inventory-logo.png" alt="Cloud Inventory">
+        <img class="login-logo logo-on-light" src="/static/cloud-inventory-logo-full-color.png" alt="Cloud Inventory">
         <h1>Site Discovery Platform</h1>
         <p class="subhead">Secure internal discovery capture and report generation</p>
         ${message ? `<div class="validation-item ERROR">${esc(message)}</div>` : ''}
@@ -237,11 +270,32 @@ async function renderProspects() {
 }
 
 function showNewProspect() {
+  const timezone = browserTimezone();
   showModal('Create prospect workspace', `
-    <form id="prospect-form">
-      <div class="field"><label>Prospect name</label><input name="name" required maxlength="200"></div>
-      <div class="field"><label>Industry</label><input name="industry" maxlength="150"></div>
-      <div class="field"><label>Opportunity overview</label><textarea name="opportunity" placeholder="Why is Cloud Inventory being evaluated and what operations are in scope?"></textarea></div>
+    <form id="prospect-onboarding-form" class="onboarding-form">
+      <fieldset class="onboarding-section">
+        <legend>1. Prospect details</legend>
+        <div class="field"><label>Prospect name</label><input name="prospect_name" required maxlength="200" autofocus></div>
+        <div class="field"><label>Industry</label><input name="prospect_industry" maxlength="150"></div>
+        <div class="field"><label>Opportunity overview</label><textarea name="prospect_opportunity" placeholder="Why is Cloud Inventory being evaluated and what operations are in scope?"></textarea></div>
+      </fieldset>
+      <fieldset class="onboarding-section">
+        <div class="onboarding-section-head"><strong class="onboarding-section-title">2. Site details</strong><label class="toggle-label"><input type="checkbox" name="create_site" data-action="onboarding-toggle" data-target="onboarding-site-fields" checked> Add a site now</label></div>
+        <div id="onboarding-site-fields">
+          <div class="field"><label>Site name</label><input name="site_name" data-onboarding-required="true" required maxlength="200"></div>
+          <div class="field"><label>Address</label><textarea name="site_address"></textarea></div>
+          <div class="field"><label>Timezone</label><select name="site_timezone">${timezoneOptions(timezone)}</select><small>Defaults to the timezone reported by this browser.</small></div>
+        </div>
+      </fieldset>
+      <fieldset class="onboarding-section">
+        <div class="onboarding-section-head"><strong class="onboarding-section-title">3. Engagement details</strong><label class="toggle-label"><input type="checkbox" name="create_engagement" data-action="onboarding-toggle" data-target="onboarding-engagement-fields" checked> Add an engagement now</label></div>
+        <div id="onboarding-engagement-fields">
+          <div class="field"><label>Engagement name</label><input name="engagement_name" data-onboarding-required="true" required maxlength="200" placeholder="Onsite site survey"></div>
+          <div class="field"><label>Survey date</label><input name="engagement_survey_date" type="date"></div>
+          <div class="field"><label>Objectives</label><textarea name="engagement_objectives" placeholder="What should this discovery engagement establish?"></textarea></div>
+          <p class="help">When a site is created above, this engagement is linked to it automatically.</p>
+        </div>
+      </fieldset>
       <button class="btn btn-primary btn-wide" type="submit">Create workspace</button>
     </form>`, '');
 }
@@ -279,7 +333,8 @@ async function ensureProspectSupport() {
 }
 
 function showNewSite() {
-  showModal('Add site', `<form id="site-form"><div class="field"><label>Site name</label><input name="name" required></div><div class="field"><label>Address</label><textarea name="address"></textarea></div><div class="field"><label>Timezone</label><input name="timezone" placeholder="America/Denver"></div><button class="btn btn-primary btn-wide" type="submit">Add site</button></form>`, '');
+  const timezone = browserTimezone();
+  showModal('Add site', `<form id="site-form"><div class="field"><label>Site name</label><input name="name" required></div><div class="field"><label>Address</label><textarea name="address"></textarea></div><div class="field"><label>Timezone</label><select name="timezone">${timezoneOptions(timezone)}</select><small>Defaults to the timezone reported by this browser.</small></div><button class="btn btn-primary btn-wide" type="submit">Add site</button></form>`, '');
 }
 function showNewEngagement() {
   const sites = state.prospect.sites.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
@@ -584,7 +639,35 @@ async function handleSubmit(event) {
       await route();
       return;
     }
-    if(form.id==='prospect-form'){const o=formObject(form);const result=await api('/api/prospects',{method:'POST',body:o});closeModal();if(result.id)location.hash=`#/prospect/${result.id}`;else route();return;}
+    if(form.id==='prospect-onboarding-form'){
+      const o=formObject(form);
+      const createSite=o.create_site===true;
+      const createEngagement=o.create_engagement===true;
+      const payload={
+        prospect:{
+          name:o.prospect_name,
+          industry:o.prospect_industry||null,
+          opportunity:o.prospect_opportunity||null,
+        },
+        site:createSite?{
+          name:o.site_name,
+          address:o.site_address||null,
+          timezone:o.site_timezone||null,
+        }:null,
+        engagement:createEngagement?{
+          name:o.engagement_name,
+          survey_date:o.engagement_survey_date||null,
+          objectives:o.engagement_objectives||null,
+        }:null,
+      };
+      const result=await api('/api/prospects/onboard',{method:'POST',body:payload},false);
+      closeModal();
+      state.activeProspectTab=result.next_tab||'reports';
+      const created=[result.site_id?'site':null,result.engagement_id?'engagement':null].filter(Boolean);
+      toast(created.length?`Prospect, ${created.join(' and ')} created.`:'Prospect created.','success');
+      location.hash=`#/prospect/${result.id}`;
+      return;
+    }
     const prospectId=state.prospect?.prospect?.id;
     if(form.id==='site-form'){await api(`/api/prospects/${prospectId}/sites`,{method:'POST',body:formObject(form)});closeModal();toast('Site added.','success');renderProspect(prospectId,'sites');return;}
     if(form.id==='engagement-form'){const o=formObject(form);if(!o.site_id)o.site_id=null;if(!o.survey_date)o.survey_date=null;await api(`/api/prospects/${prospectId}/engagements`,{method:'POST',body:o});closeModal();toast('Engagement added.','success');renderProspect(prospectId,'engagements');return;}
@@ -672,6 +755,7 @@ async function handleClick(event) {
 async function handleChange(event) {
   const target=event.target;
   try {
+    if(target.matches('[data-action="onboarding-toggle"]')){setOnboardingSectionEnabled(target);return;}
     if(target.matches('[data-action="mobile-section"]')){location.hash=`#/report/${state.report.report.id}/${target.value}`;return;}
     if(target.matches('[data-action="quick-entry-area"]')){setQuickEntryArea(state.report.report.id,target.value);return;}
     if(target.id==='quick-entry-camera'||target.id==='quick-entry-file'){await uploadQuickEntryFiles(target);return;}

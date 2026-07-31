@@ -193,3 +193,10 @@ When an opportunity closes:
 5. follow the retention review process when due.
 
 Permanent deletion is an administrator-controlled, audited action and cannot be reversed from the application.
+
+
+## Guided prospect creation
+
+Select **Create prospect** to enter the prospect, optional site, and optional engagement in one workflow. Site and engagement creation are enabled by default; clear either checkbox to skip that record. When both are entered, the engagement is linked to the new site automatically. The application then opens Sites, Engagements, or Reports according to the next incomplete step.
+
+Site timezone defaults to the browser timezone and can be changed using the IANA timezone dropdown.

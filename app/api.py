@@ -94,6 +94,7 @@ from .schemas import (
     PasswordChangeRequest,
     ProspectArchiveRequest,
     ProspectCreate,
+    ProspectOnboardingCreate,
     ProspectDeleteRequest,
     PublicationRequest,
     QuickCaptureRequest,
@@ -310,6 +311,64 @@ def create_prospect(payload: ProspectCreate, user: User = Depends(enforce_passwo
     audit(db, actor=user, action="PROSPECT_CREATED", target_type="PROSPECT", target_id=prospect.id, prospect_id=prospect.id)
     db.commit()
     return {"id": prospect.id, "name": prospect.name}
+
+
+@router.post("/prospects/onboard", dependencies=[Depends(require_csrf)])
+def onboard_prospect(
+    payload: ProspectOnboardingCreate,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    prospect = Prospect(
+        name=payload.prospect.name,
+        industry=payload.prospect.industry,
+        opportunity=payload.prospect.opportunity,
+        retention_due_at=utcnow() + timedelta(days=settings.default_retention_days),
+        created_by=user.id,
+    )
+    db.add(prospect)
+    db.flush()
+    db.add(ProspectMembership(prospect_id=prospect.id, user_id=user.id, role_scope="OWNER", created_by=user.id))
+    audit(db, actor=user, action="PROSPECT_CREATED", target_type="PROSPECT", target_id=prospect.id, prospect_id=prospect.id, metadata={"creation_flow": "GUIDED_ONBOARDING"})
+
+    site = None
+    if payload.site:
+        site = Site(
+            prospect_id=prospect.id,
+            name=payload.site.name,
+            address=payload.site.address,
+            timezone=payload.site.timezone,
+            created_by=user.id,
+        )
+        db.add(site)
+        db.flush()
+        audit(db, actor=user, action="SITE_CREATED", target_type="SITE", target_id=site.id, prospect_id=prospect.id, metadata={"creation_flow": "GUIDED_ONBOARDING"})
+
+    engagement = None
+    if payload.engagement:
+        engagement = Engagement(
+            prospect_id=prospect.id,
+            site_id=site.id if site else None,
+            name=payload.engagement.name,
+            survey_date=payload.engagement.survey_date,
+            objectives=payload.engagement.objectives,
+            owner_id=user.id,
+        )
+        db.add(engagement)
+        db.flush()
+        db.add(EngagementMember(engagement_id=engagement.id, user_id=user.id, role_scope="OWNER"))
+        audit(db, actor=user, action="ENGAGEMENT_CREATED", target_type="ENGAGEMENT", target_id=engagement.id, prospect_id=prospect.id, metadata={"creation_flow": "GUIDED_ONBOARDING", "site_id": site.id if site else None})
+
+    db.commit()
+    next_tab = "reports" if engagement else "engagements" if site else "sites"
+    return {
+        "id": prospect.id,
+        "name": prospect.name,
+        "site_id": site.id if site else None,
+        "engagement_id": engagement.id if engagement else None,
+        "next_tab": next_tab,
+    }
 
 
 @router.get("/prospects/{prospect_id}")

@@ -2027,3 +2027,36 @@ Current vendor behavior, pricing, eligibility, and product settings shall be rev
 The v0.3.0 feature build passed 20 automated tests, Python compilation, JavaScript syntax validation, OpenAPI generation, document-generation regression, and a migration simulation proving that draft reports receive Printing while finalized reports remain unchanged. Physical-device camera and offline acceptance remain staging gates.
 
 The detailed interaction contract is maintained in `docs/QUICK_ENTRY_SPEC_v0.3.0.md`.
+
+
+# 30. Controlled Enhancement Delta — Prospect Onboarding and Branding v0.4.0
+
+## 30.1 Change Control
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.4.0` |
+| Source baseline | staging `v0.3.0` |
+| Development branch | `feature/prospect-onboarding-v0.4.0` |
+| Database revision | None required |
+| Status | Implemented and automated validation passed; staging acceptance pending |
+
+## 30.2 Requirements
+
+- **FR-ONB-001:** Create Prospect shall present mandatory Prospect details and optional Site and Engagement details in one guided workflow.
+- **FR-ONB-002:** Site and Engagement creation shall be enabled by default and independently skippable.
+- **FR-ONB-003:** Selected Prospect, Site, and Engagement records shall be created in one database transaction.
+- **FR-ONB-004:** When Site and Engagement are both created, the Engagement shall reference the newly created Site.
+- **FR-ONB-005:** Prospect-only creation shall open Sites; Prospect plus Site shall open Engagements; creation of an Engagement shall open Reports.
+- **FR-TZ-001:** Site timezone fields shall use IANA timezone identifiers.
+- **FR-TZ-002:** The browser timezone shall be selected by default when available.
+- **FR-TZ-003:** UK coverage shall include Europe/London, Europe/Guernsey, Europe/Isle_of_Man, and Europe/Jersey.
+- **FR-BRAND-001:** Dark application surfaces shall use the negative Cloud Inventory logo.
+- **FR-BRAND-002:** Light application surfaces and standard generated outputs shall use the full-colour Cloud Inventory logo.
+- **FR-BRAND-003:** Custom report logos shall continue to override the standard output logo.
+
+## 30.3 Verification
+
+The v0.4.0 build passed 23 automated tests, Python compilation, JavaScript syntax validation, OpenAPI generation, and the existing Quick Entry and document workflow regression suite. Physical-browser timezone defaults and visual logo acceptance remain staging gates.
+
+The detailed interaction contract is maintained in `docs/PROSPECT_ONBOARDING_SPEC_v0.4.0.md`.

@@ -463,7 +463,34 @@ async function handleSubmit(event) {
   event.preventDefault();
   try {
     if(form.id==='login-form'){const o=formObject(form);const me=await api('/api/auth/login',{method:'POST',body:o},false);state.me=me;state.csrf=me.csrf_token;location.hash='#/prospects';if(me.force_password_change)showPasswordModal();return;}
-    if(form.id==='password-form'){const o=formObject(form);if(o.new_password!==o.confirm_password)throw new Error('New passwords do not match.');await api('/api/auth/change-password',{method:'POST',body:{current_password:o.current_password,new_password:o.new_password}},false);state.me.force_password_change=false;closeModal();toast('Password updated.','success');route();return;}
+    if(form.id==='password-form'){
+      const o=formObject(form);
+
+      if(o.new_password!==o.confirm_password){
+        throw new Error('New passwords do not match.');
+      }
+
+      await api(
+        '/api/auth/change-password',
+        {
+          method:'POST',
+          body:{
+            current_password:o.current_password,
+            new_password:o.new_password
+          }
+        },
+        false
+      );
+
+      const me=await api('/api/auth/me',{},false);
+      state.me=me;
+      state.csrf=me.csrf_token;
+
+      closeModal();
+      toast('Password updated.','success');
+      await route();
+      return;
+    }
     if(form.id==='prospect-form'){const o=formObject(form);const result=await api('/api/prospects',{method:'POST',body:o});closeModal();if(result.id)location.hash=`#/prospect/${result.id}`;else route();return;}
     const prospectId=state.prospect?.prospect?.id;
     if(form.id==='site-form'){await api(`/api/prospects/${prospectId}/sites`,{method:'POST',body:formObject(form)});closeModal();toast('Site added.','success');renderProspect(prospectId,'sites');return;}
@@ -575,10 +602,10 @@ async function updateQueueCount(){try{const n=(await idbAll('mutations')).length
 async function flushQueue(){if(!navigator.onLine){toast('Still offline.','error');return;}try{const me=await api('/api/auth/me',{},false);state.csrf=me.csrf_token;for(const item of await idbAll('mutations')){try{const headers={...(item.headers||{}),'X-CSRF-Token':state.csrf};await api(item.url,{method:item.method,body:item.body,headers},false);await idbDelete('mutations',item.id);}catch(e){if(e.status>=400&&e.status<500){toast(`Queued change requires attention: ${e.message}`,'error');}break;}}for(const item of await idbAll('evidence')){try{const fd=new FormData();fd.append('section_id',item.sectionId);fd.append('caption',item.caption||item.file.name);fd.append('placement',item.placement||'INLINE');fd.append('classification','CONFIDENTIAL');fd.append('file',item.file,item.file.name);await api(`/api/reports/${item.reportId}/evidence`,{method:'POST',body:fd},false);await idbDelete('evidence',item.id);}catch{break;}}updateConnection();updateQueueCount();toast('Offline queue synchronized.','success');}catch(error){toast(error.message,'error');}}
 function updateConnection(){const pill=document.getElementById('connection-pill');if(pill){pill.textContent=navigator.onLine?'Online':'Offline - capture continues';pill.classList.toggle('offline',!navigator.onLine);}updateQueueCount();}
 
-app.addEventListener('submit',handleSubmit);
-app.addEventListener('click',handleClick);
-app.addEventListener('change',handleChange);
-app.addEventListener('input',handleInput);
+document.addEventListener('submit',handleSubmit);
+document.addEventListener('click',handleClick);
+document.addEventListener('change',handleChange);
+document.addEventListener('input',handleInput);
 window.addEventListener('hashchange',route);
 window.addEventListener('online',()=>{updateConnection();flushQueue();});
 window.addEventListener('offline',updateConnection);

@@ -63,9 +63,9 @@ def test_frontend_timezone_and_logo_contract() -> None:
     assert "Europe/London" in app_js
     assert "Europe/Guernsey" in app_js
     assert "Australia/Melbourne" in app_js
-    assert "/static/cloud-inventory-logo-negative.png" in app_js
-    assert "/static/cloud-inventory-logo-full-color.png" in app_js
-    assert "ci-discovery-v0.4.0" in sw_js
-    assert "cloud-inventory-logo-full-color.png" in documents
-    assert (ROOT / "app" / "static" / "cloud-inventory-logo-full-color.png").exists()
-    assert (ROOT / "app" / "static" / "cloud-inventory-logo-negative.png").exists()
+    assert "/static/cloud-inventory-logo-for-dark-background-v0.4.1.png" in app_js
+    assert "/static/cloud-inventory-logo-for-light-background-v0.4.1.png" in app_js
+    assert "ci-discovery-v0.4.1" in sw_js
+    assert "cloud-inventory-logo-for-light-background-v0.4.1.png" in documents
+    assert (ROOT / "app" / "static" / "cloud-inventory-logo-for-light-background-v0.4.1.png").exists()
+    assert (ROOT / "app" / "static" / "cloud-inventory-logo-for-dark-background-v0.4.1.png").exists()

@@ -276,7 +276,7 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         raise ValueError("Report dependencies are incomplete")
     owner = db.get(User, report.owner_id)
     storage = ObjectStorage(settings)
-    logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo-full-color.png"
+    logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo-for-light-background-v0.4.1.png"
     custom_logo_path: Path | None = None
     if brand.logo_storage_key:
         try:

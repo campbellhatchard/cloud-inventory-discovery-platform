@@ -167,7 +167,7 @@ function shell(content, active = 'prospects') {
   <div class="app-shell">
     <header class="topbar">
       <div class="brand" data-action="go" data-route="#/prospects" role="button" tabindex="0">
-        <img class="logo-on-dark" src="/static/cloud-inventory-logo-negative.png" alt="Cloud Inventory">
+        <img class="logo-on-dark" src="/static/cloud-inventory-logo-for-dark-background-v0.4.1.png" alt="Cloud Inventory">
         <span class="brand-title">Site Discovery</span>
       </div>
       <nav class="topnav" aria-label="Primary navigation">
@@ -193,7 +193,7 @@ function renderLogin(message = '') {
   app.innerHTML = `
     <main class="login-page">
       <section class="login-card">
-        <img class="login-logo logo-on-light" src="/static/cloud-inventory-logo-full-color.png" alt="Cloud Inventory">
+        <img class="login-logo logo-on-light" src="/static/cloud-inventory-logo-for-light-background-v0.4.1.png" alt="Cloud Inventory">
         <h1>Site Discovery Platform</h1>
         <p class="subhead">Secure internal discovery capture and report generation</p>
         ${message ? `<div class="validation-item ERROR">${esc(message)}</div>` : ''}

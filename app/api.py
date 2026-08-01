@@ -111,7 +111,7 @@ from .schemas import (
 )
 from .storage import ObjectStorage, StorageConfigurationError, build_storage_key, safe_filename, storage_configuration_status
 from .validation import validate_report, validation_passed
-from .documents import convert_docx_to_pdf, generate_docx
+from .documents import convert_docx_to_pdf, generate_docx, refresh_docx_fields
 
 router = APIRouter(prefix="/api")
 
@@ -696,6 +696,7 @@ def download_draft_docx(report_id: str, user: User = Depends(enforce_password_ch
     report = _get_report(db, report_id)
     require_report_access(db, user, report)
     data = generate_docx(db, report.id, settings, publication_type="FULL_DISCOVERY", is_final=False)
+    data, _ = refresh_docx_fields(data, settings)
     filename = safe_filename(report.title) or "site-discovery-report"
     return StreamingResponse(io.BytesIO(data), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="{filename}-r{report.revision}-draft.docx"'})
 
@@ -705,7 +706,9 @@ def download_draft_pdf(report_id: str, user: User = Depends(enforce_password_cha
     report = _get_report(db, report_id)
     require_report_access(db, user, report)
     docx_bytes = generate_docx(db, report.id, settings, publication_type="FULL_DISCOVERY", is_final=False)
-    pdf_bytes = convert_docx_to_pdf(docx_bytes, settings)
+    docx_bytes, pdf_bytes = refresh_docx_fields(docx_bytes, settings, emit_pdf=True)
+    if pdf_bytes is None:
+        pdf_bytes = convert_docx_to_pdf(docx_bytes, settings)
     filename = safe_filename(report.title) or "site-discovery-report"
     return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}-r{report.revision}-draft.pdf"'})
 
@@ -725,7 +728,13 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     capabilities = db.execute(select(CapabilityMapping, Capability).join(Capability, CapabilityMapping.capability_id == Capability.id).where(CapabilityMapping.report_id == report.id)).all()
     benefits = list(db.scalars(select(Benefit).where(Benefit.report_id == report.id).order_by(Benefit.created_at)).all())
     suggestions = list(db.scalars(select(AiSuggestion).where(AiSuggestion.report_id == report.id).order_by(AiSuggestion.created_at.desc())).all())
-    publications = list(db.scalars(select(Publication).where(Publication.report_id == report.id).order_by(Publication.created_at.desc())).all())
+    publications = list(
+        db.scalars(
+            select(Publication)
+            .where(Publication.report_id == report.id, Publication.dismissed_at.is_(None))
+            .order_by(Publication.created_at.desc())
+        ).all()
+    )
     comments = db.execute(select(Comment, User).join(User, Comment.author_id == User.id).where(Comment.report_id == report.id).order_by(Comment.created_at)).all()
     members = db.execute(select(ReportMember, User).join(User, ReportMember.user_id == User.id).where(ReportMember.report_id == report.id)).all()
     prompt_defs = list(db.scalars(select(PromptDefinition).where(PromptDefinition.active.is_(True)).order_by(PromptDefinition.process_module, PromptDefinition.display_order)).all())
@@ -743,7 +752,21 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         "capability_mappings": [{"id": m.id, "finding_id": m.finding_id, "capability_id": c.id, "capability_code": c.capability_code, "capability_name": c.name, "rationale": m.rationale, "prerequisites": m.prerequisites, "approval_state": m.approval_state} for m, c in capabilities],
         "benefits": [{"id": b.id, "finding_id": b.finding_id, "capability_mapping_id": b.capability_mapping_id, "statement": b.statement, "measure_type": b.measure_type, "formula": b.formula, "assumptions": b.assumptions, "approval_state": b.approval_state} for b in benefits],
         "ai_suggestions": [{"id": s.id, "section_id": s.section_id, "purpose": s.purpose, "content": s.content, "confidence": s.confidence, "review_state": s.review_state, "created_at": _iso(s.created_at)} for s in suggestions],
-        "publications": [{"id": p.id, "publication_type": p.publication_type, "is_final": p.is_final, "status": p.status, "docx_file_id": p.docx_file_id, "pdf_file_id": p.pdf_file_id, "error": p.error, "created_at": _iso(p.created_at)} for p in publications],
+        "publications": [
+            {
+                "id": p.id,
+                "publication_type": p.publication_type,
+                "is_final": p.is_final,
+                "status": p.status,
+                "report_revision": p.report_revision,
+                "docx_file_id": p.docx_file_id,
+                "pdf_file_id": p.pdf_file_id,
+                "error": p.error,
+                "created_at": _iso(p.created_at),
+                "completed_at": _iso(p.completed_at),
+            }
+            for p in publications
+        ],
         "members": [{"user_id": member.user_id, "role_scope": member.role_scope, "display_name": member_user.display_name, "username": member_user.username} for member, member_user in members],
         "comments": [{"id": comment.id, "section_id": comment.section_id, "author_id": comment.author_id, "author_name": comment_user.display_name or comment_user.username, "body": comment.body, "status": comment.status, "created_at": _iso(comment.created_at), "resolved_at": _iso(comment.resolved_at)} for comment, comment_user in comments],
     }
@@ -1220,7 +1243,49 @@ def get_publication(publication_id: str, user: User = Depends(enforce_password_c
         raise HTTPException(404, "Publication not found.")
     report = _get_report(db, publication.report_id)
     require_report_access(db, user, report)
-    return {"id": publication.id, "status": publication.status, "publication_type": publication.publication_type, "is_final": publication.is_final, "docx_file_id": publication.docx_file_id, "pdf_file_id": publication.pdf_file_id, "error": publication.error, "completed_at": _iso(publication.completed_at)}
+    return {
+        "id": publication.id,
+        "status": publication.status,
+        "publication_type": publication.publication_type,
+        "is_final": publication.is_final,
+        "report_revision": publication.report_revision,
+        "docx_file_id": publication.docx_file_id,
+        "pdf_file_id": publication.pdf_file_id,
+        "error": publication.error,
+        "created_at": _iso(publication.created_at),
+        "completed_at": _iso(publication.completed_at),
+        "dismissed_at": _iso(publication.dismissed_at),
+    }
+
+
+@router.post("/reports/{report_id}/publications/{publication_id}/dismiss", dependencies=[Depends(require_csrf)])
+def dismiss_failed_publication(
+    report_id: str,
+    publication_id: str,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report, "REVIEWER")
+    publication = db.get(Publication, publication_id)
+    if not publication or publication.report_id != report.id:
+        raise HTTPException(404, "Publication not found.")
+    if publication.status != "FAILED":
+        raise HTTPException(409, "Only failed publication attempts can be dismissed.")
+    if publication.dismissed_at is None:
+        publication.dismissed_at = utcnow()
+        publication.dismissed_by = user.id
+        audit(
+            db,
+            actor=user,
+            action="PUBLICATION_FAILURE_DISMISSED",
+            target_type="PUBLICATION",
+            target_id=publication.id,
+            prospect_id=report.prospect_id,
+            metadata={"report_id": report.id, "publication_type": publication.publication_type},
+        )
+        db.commit()
+    return {"ok": True, "dismissed_at": _iso(publication.dismissed_at)}
 
 
 @router.delete("/reports/{report_id}", dependencies=[Depends(require_csrf)])

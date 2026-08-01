@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -9,7 +10,9 @@ from pathlib import Path
 from typing import Iterable
 
 from docx import Document
+from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
@@ -39,6 +42,14 @@ from .models import (
 from .storage import ObjectStorage, StorageConfigurationError
 
 
+DEFAULT_PROPRIETARY_FOOTER = (
+    "This document is the property of and proprietary to Cloud Inventory and contains trade secret and "
+    "confidential information, and is solely for the Customer's internal use. Without the express written "
+    "consent of Cloud Inventory, this document shall not be used, reproduced, copied, disclosed, or transmitted, "
+    "in whole or in part. Copyright Cloud Inventory. All rights reserved."
+)
+
+
 def _hex_color(value: str) -> RGBColor:
     value = value.lstrip("#")
     return RGBColor.from_string(value.upper())
@@ -58,10 +69,12 @@ def _set_repeat_table_header(row) -> None:
     tr_pr.append(tbl_header)
 
 
-def _add_field(paragraph, instruction: str, placeholder: str = "") -> None:
+def _add_field(paragraph, instruction: str, placeholder: str = "", *, dirty: bool = False) -> None:
     run = paragraph.add_run()
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
+    if dirty:
+        begin.set(qn("w:dirty"), "true")
     instr = OxmlElement("w:instrText")
     instr.set(qn("xml:space"), "preserve")
     instr.text = instruction
@@ -74,14 +87,22 @@ def _add_field(paragraph, instruction: str, placeholder: str = "") -> None:
     run._r.extend([begin, instr, separate, text, end])
 
 
+def _request_field_updates(doc: Document) -> None:
+    settings = doc.settings._element
+    existing = settings.find(qn("w:updateFields"))
+    if existing is None:
+        existing = OxmlElement("w:updateFields")
+        settings.append(existing)
+    existing.set(qn("w:val"), "true")
+
+
 def _add_page_number(paragraph) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     paragraph.add_run("Page ")
     _add_field(paragraph, "PAGE", "1")
 
 
-def _add_watermark(section, text: str) -> None:
-    header = section.header
+def _add_watermark_to_header(header, text: str) -> None:
     paragraph = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     shape_id = "PowerPlusWaterMarkObject"
@@ -121,6 +142,22 @@ def _configure_styles(doc: Document, brand: BrandingProfile) -> None:
         style.paragraph_format.keep_with_next = True
         style.paragraph_format.space_before = Pt(12)
         style.paragraph_format.space_after = Pt(6)
+    # Keep list markers visually subordinate to body text and clearly indented.
+    for list_style_name in ("List Bullet", "List Number"):
+        list_style = styles[list_style_name]
+        list_style.font.name = brand.body_font
+        list_style.font.size = Pt(10)
+        list_style.paragraph_format.left_indent = Inches(0.35)
+        list_style.paragraph_format.first_line_indent = Inches(-0.18)
+        list_style.paragraph_format.space_after = Pt(3)
+
+    toc_heading = styles["TOC Heading"]
+    toc_heading.font.name = brand.heading_font
+    toc_heading.font.size = Pt(18)
+    toc_heading.font.bold = True
+    toc_heading.font.color.rgb = _hex_color(brand.primary_color)
+    toc_heading.paragraph_format.space_after = Pt(12)
+
     if "Evidence Caption" not in [s.name for s in styles]:
         cap = styles.add_style("Evidence Caption", WD_STYLE_TYPE.PARAGRAPH)
         cap.font.name = brand.body_font
@@ -129,20 +166,96 @@ def _configure_styles(doc: Document, brand: BrandingProfile) -> None:
         cap.font.color.rgb = _hex_color(brand.accent_color)
 
 
-def _apply_headers_footers(doc: Document, brand: BrandingProfile, is_final: bool) -> None:
-    for section in doc.sections:
-        section.top_margin = Inches(0.7)
-        section.bottom_margin = Inches(0.7)
-        section.left_margin = Inches(0.75)
-        section.right_margin = Inches(0.75)
-        footer = section.footer
-        p = footer.paragraphs[0]
-        p.text = brand.footer_text + "  |  "
-        p.style = doc.styles["Normal"]
-        p.runs[0].font.size = Pt(8)
-        _add_page_number(p)
+def _configure_section_layout(section) -> None:
+    section.top_margin = Inches(0.7)
+    # Reserve enough body clearance for the legal footer on content pages.
+    section.bottom_margin = Inches(0.95)
+    section.left_margin = Inches(0.75)
+    section.right_margin = Inches(0.75)
+    section.footer_distance = Inches(0.22)
+
+
+def _clear_footer(footer) -> None:
+    for table in list(footer.tables):
+        footer._element.remove(table._element)
+    for paragraph in footer.paragraphs:
+        paragraph.clear()
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(0)
+
+
+def _add_content_footer(section, brand: BrandingProfile, footer_logo_path: Path | None) -> None:
+    footer = section.footer
+    footer.is_linked_to_previous = False
+    _clear_footer(footer)
+
+    table = footer.add_table(rows=1, cols=3, width=Inches(7.0))
+    table.autofit = False
+    widths = (Inches(0.82), Inches(5.48), Inches(0.70))
+    for column, width in zip(table.columns, widths):
+        column.width = width
+    for cell, width in zip(table.rows[0].cells, widths):
+        cell.width = width
+        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+    # Set explicit OOXML grid widths so LibreOffice preserves the asymmetric
+    # footer layout while refreshing the TOC field.
+    grid_cols = table._tbl.tblGrid.gridCol_lst
+    for grid_col, width in zip(grid_cols, widths):
+        grid_col.set(qn("w:w"), str(int(width.twips)))
+
+    logo_cell, text_cell, page_cell = table.rows[0].cells
+    logo_p = logo_cell.paragraphs[0]
+    logo_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    logo_p.paragraph_format.space_after = Pt(0)
+    if footer_logo_path and footer_logo_path.exists():
+        logo_p.add_run().add_picture(str(footer_logo_path), width=Inches(0.68))
+
+    legal_p = text_cell.paragraphs[0]
+    legal_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    legal_p.paragraph_format.space_after = Pt(0)
+    legal_run = legal_p.add_run(brand.footer_text or DEFAULT_PROPRIETARY_FOOTER)
+    legal_run.font.name = brand.body_font
+    legal_run.font.size = Pt(5.5)
+    legal_run.font.color.rgb = RGBColor(70, 78, 86)
+
+    page_p = page_cell.paragraphs[0]
+    page_p.paragraph_format.space_after = Pt(0)
+    _add_page_number(page_p)
+    for run in page_p.runs:
+        run.font.name = brand.body_font
+        run.font.size = Pt(7)
+
+
+def _apply_headers_footers(
+    doc: Document,
+    brand: BrandingProfile,
+    is_final: bool,
+    footer_logo_path: Path | None,
+) -> None:
+    if not doc.sections:
+        return
+
+    # The cover occupies its own section so page 1 is structurally footer-free.
+    # This survives LibreOffice's TOC refresh, which can otherwise duplicate a
+    # default footer into a first-page footer even when w:titlePg is present.
+    cover_section = doc.sections[0]
+    _configure_section_layout(cover_section)
+    cover_section.footer.is_linked_to_previous = False
+    _clear_footer(cover_section.footer)
+    cover_section.first_page_footer.is_linked_to_previous = False
+    _clear_footer(cover_section.first_page_footer)
+
+    if not is_final:
+        cover_section.header.is_linked_to_previous = False
+        _add_watermark_to_header(cover_section.header, brand.draft_watermark)
+
+    for section in doc.sections[1:]:
+        _configure_section_layout(section)
+        _add_content_footer(section, brand, footer_logo_path)
         if not is_final:
-            _add_watermark(section, brand.draft_watermark)
+            section.header.is_linked_to_previous = False
+            _add_watermark_to_header(section.header, brand.draft_watermark)
 
 
 def _add_logo(doc: Document, logo_path: Path | None, width: float = 2.0) -> None:
@@ -188,17 +301,20 @@ def _add_cover(doc: Document, report: Report, prospect: Prospect, site: Site | N
     for run in note.runs:
         run.font.size = Pt(8)
         run.font.italic = True
-    doc.add_page_break()
 
 
-def _add_toc(doc: Document, sections: list[ReportSection]) -> None:
-    doc.add_heading("Document Contents", level=1)
-    # A static, generated contents list renders reliably in both Word and headless PDF.
-    # Section titles are sourced directly from the report snapshot, so the list cannot drift
-    # from the generated body even when Word fields are not refreshed by the PDF renderer.
-    for index, section in enumerate(sections, start=1):
-        p = doc.add_paragraph(style="List Number")
-        p.add_run(section.title)
+
+def _add_toc(doc: Document) -> None:
+    # Word Automatic Table 2 equivalent: built-in TOC Heading plus a real TOC
+    # field using Heading 1-3, hyperlinks and page-number references.
+    doc.add_paragraph("Table of Contents", style="TOC Heading")
+    field_paragraph = doc.add_paragraph()
+    _add_field(
+        field_paragraph,
+        ' TOC \\o "1-3" \\h \\z \\u ',
+        "Table of Contents will update automatically.",
+        dirty=True,
+    )
     doc.add_page_break()
 
 
@@ -224,8 +340,12 @@ def _add_text(doc: Document, text: str) -> None:
     for block in [x.strip() for x in text.split("\n") if x.strip()]:
         if block.startswith(("- ", "• ", "* ")):
             doc.add_paragraph(block[2:].strip(), style="List Bullet")
-        else:
-            doc.add_paragraph(block)
+            continue
+        numbered = re.match(r"^\d+[\.)]\s+(.+)$", block)
+        if numbered:
+            doc.add_paragraph(numbered.group(1).strip(), style="List Number")
+            continue
+        doc.add_paragraph(block)
 
 
 def _image_bytes_to_file(data: bytes, suffix: str = ".jpg") -> Path:
@@ -286,7 +406,8 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         # has not yet been configured. Stored evidence/custom branding is simply
         # omitted with an explanatory note instead of aborting the document.
         storage = None
-    logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo-for-light-background-v0.4.1.png"
+    cloud_inventory_logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo-for-light-background-v0.4.1.png"
+    logo_path = cloud_inventory_logo_path
     custom_logo_path: Path | None = None
     if brand.logo_storage_key and storage is not None:
         try:
@@ -302,8 +423,12 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
 
     doc = Document()
     _configure_styles(doc, brand)
-    _apply_headers_footers(doc, brand, is_final)
+    _request_field_updates(doc)
     _add_cover(doc, report, prospect, site, engagement, brand, logo_path, is_final)
+    # Start page 2 in a separate section so the footer is guaranteed to appear
+    # on every page after the cover, but never on page 1.
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    _apply_headers_footers(doc, brand, is_final, cloud_inventory_logo_path)
     _add_revision_history(doc, report, owner, brand)
 
     if publication_type == "FOLLOW_UP_QUESTIONNAIRE":
@@ -332,7 +457,7 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         # reportable content. Empty optional sections never create blank output.
         sections = [s for s in all_sections if has_publishable_content(s)]
 
-    _add_toc(doc, sections)
+    _add_toc(doc)
     for section in sections:
         doc.add_heading(section.title, level=1)
         if publication_type == "FOLLOW_UP_QUESTIONNAIRE":
@@ -408,6 +533,46 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
     if custom_logo_path:
         custom_logo_path.unlink(missing_ok=True)
     return output.getvalue()
+
+
+def refresh_docx_fields(
+    docx_bytes: bytes,
+    settings: Settings,
+    *,
+    emit_pdf: bool = False,
+) -> tuple[bytes, bytes | None]:
+    """Refresh TOC/page-reference fields through LibreOffice UNO when available.
+
+    Render runs use a Linux system Python with python3-uno. Windows/local
+    validation falls back to the original DOCX; the embedded TOC field remains
+    valid and is marked for automatic refresh when opened in Word.
+    """
+    settings.document_work_dir.mkdir(parents=True, exist_ok=True)
+    helper = Path(__file__).resolve().parents[1] / "scripts" / "refresh_docx_fields.py"
+    system_python = Path("/usr/bin/python3")
+    if os.name == "nt" or not helper.exists() or not system_python.exists():
+        return docx_bytes, None
+
+    with tempfile.TemporaryDirectory(dir=settings.document_work_dir) as tmp:
+        tmp_path = Path(tmp)
+        docx_path = tmp_path / "report.docx"
+        pdf_path = tmp_path / "report.pdf"
+        docx_path.write_bytes(docx_bytes)
+        cmd = [
+            str(system_python),
+            str(helper),
+            str(docx_path),
+            "--libreoffice",
+            settings.libreoffice_path,
+        ]
+        if emit_pdf:
+            cmd.extend(["--pdf", str(pdf_path)])
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=210)
+        if proc.returncode != 0 or not docx_path.exists():
+            return docx_bytes, None
+        refreshed = docx_path.read_bytes()
+        pdf_bytes = pdf_path.read_bytes() if emit_pdf and pdf_path.exists() else None
+        return refreshed, pdf_bytes
 
 
 def convert_docx_to_pdf(docx_bytes: bytes, settings: Settings) -> bytes:

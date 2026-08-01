@@ -109,7 +109,7 @@ def seed() -> None:
 
         brand = db.scalar(select(BrandingProfile).where(BrandingProfile.name == "Denver Cloud Inventory", BrandingProfile.version == 1))
         if not brand:
-            brand = BrandingProfile(name="Denver Cloud Inventory", version=1, is_default=True, primary_color="#1F3447", secondary_color="#00A7C7", accent_color="#6B7785", heading_font="Aptos Display", body_font="Aptos", confidentiality_text=DEFAULT_CONFIDENTIALITY, draft_watermark="DRAFT - CONFIDENTIAL", footer_text="Cloud Inventory | Confidential", created_by=admin.id)
+            brand = BrandingProfile(name="Denver Cloud Inventory", version=1, is_default=True, primary_color="#1F3447", secondary_color="#00A7C7", accent_color="#6B7785", heading_font="Aptos Display", body_font="Aptos", confidentiality_text=DEFAULT_CONFIDENTIALITY, draft_watermark="DRAFT - CONFIDENTIAL", footer_text=("This document is the property of and proprietary to Cloud Inventory and contains trade secret and confidential information, and is solely for the Customer's internal use. Without the express written consent of Cloud Inventory, this document shall not be used, reproduced, copied, disclosed, or transmitted, in whole or in part. Copyright Cloud Inventory. All rights reserved."), created_by=admin.id)
             db.add(brand)
             db.flush()
 

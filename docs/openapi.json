@@ -1667,7 +1667,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.5.1"
+    "version": "0.5.2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3984,6 +3984,52 @@
           }
         },
         "summary": "Create Publication"
+      }
+    },
+    "/api/reports/{report_id}/publications/{publication_id}/dismiss": {
+      "post": {
+        "operationId": "dismiss_failed_publication_api_reports__report_id__publications__publication_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "publication_id",
+            "required": true,
+            "schema": {
+              "title": "Publication Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Failed Publication"
       }
     },
     "/api/reports/{report_id}/quick-capture": {

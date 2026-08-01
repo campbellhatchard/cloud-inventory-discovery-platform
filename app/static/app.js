@@ -25,6 +25,7 @@ const esc = value => String(value ?? '')
   .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 const fmtDate = value => value ? new Intl.DateTimeFormat(undefined, {year:'numeric', month:'short', day:'numeric'}).format(new Date(value)) : 'Not set';
+const fmtDateTime = value => value ? new Intl.DateTimeFormat(undefined, {year:'numeric', month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}).format(new Date(value)) : 'Not set';
 const bytes = n => !n ? '0 B' : `${(n / (n > 1048576 ? 1048576 : 1024)).toFixed(1)} ${n > 1048576 ? 'MB' : 'KB'}`;
 const uid = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 
@@ -542,7 +543,13 @@ function reportPreviewContent() {
     </section>
     <section class="card">
       <div class="section-head"><div><h2>Generated Documents</h2><p class="help">Persisted Word and PDF files appear here after controlled publication.</p></div><button class="btn btn-ghost btn-small" data-action="refresh-report">Refresh status</button></div>
-      <div class="generated-documents">${report.publications.map(item=>`<div class="finding"><strong>${esc(item.publication_type.replaceAll('_',' '))}</strong><span class="badge ${item.status==='COMPLETED'?'badge-success':item.status==='FAILED'?'badge-danger':'badge-warning'}">${esc(item.status)}</span>${item.error?`<p class="impact">${esc(item.error)}</p>`:''}<div class="card-actions">${item.docx_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.docx_file_id}">Word</a>`:''}${item.pdf_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.pdf_file_id}">PDF</a>`:''}</div></div>`).join('') || '<p class="help">No persisted documents have been requested.</p>'}</div>
+      <div class="generated-documents">${report.publications.map(item=>{
+        const createdAt = item.created_at ? new Date(item.created_at).getTime() : 0;
+        const laterSuccess = item.status === 'FAILED' && report.publications.some(other => other.status === 'COMPLETED' && other.created_at && new Date(other.created_at).getTime() > createdAt);
+        const statusLabel = laterSuccess ? 'PREVIOUS FAILED ATTEMPT' : item.status;
+        const statusClass = item.status === 'COMPLETED' ? 'badge-success' : laterSuccess ? 'badge-warning' : item.status === 'FAILED' ? 'badge-danger' : 'badge-warning';
+        return `<div class="finding"><div class="section-head"><div><strong>${esc(item.publication_type.replaceAll('_',' '))}</strong><div class="card-meta"><span>Revision ${esc(item.report_revision ?? '')}</span><span>${esc(fmtDateTime(item.completed_at || item.created_at))}</span></div></div><span class="badge ${statusClass}">${esc(statusLabel)}</span></div>${item.error?`<p class="impact">${esc(item.error)}</p>`:''}<div class="card-actions">${item.docx_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.docx_file_id}">Word</a>`:''}${item.pdf_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.pdf_file_id}">PDF</a>`:''}${item.status==='FAILED'&&canReview(report.access_scope)?`<button class="btn btn-ghost btn-small" data-action="dismiss-publication" data-id="${item.id}">Dismiss failed attempt</button>`:''}</div></div>`;
+      }).join('') || '<p class="help">No persisted documents have been requested.</p>'}</div>
     </section>
     <section class="compiled-report card">
       <div class="compiled-report-cover"><div class="card-meta"><span class="badge badge-cyan">REPORT REVIEW</span>${reportStatusBadge(report.report.state)}</div><h1>${esc(report.report.title)}</h1><p>Revision ${report.report.revision} · ${esc(report.report.report_kind)}</p></div>
@@ -853,6 +860,7 @@ async function handleClick(event) {
     if(action==='review-ai'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});renderReport(reportId,section.id);return;}
     if(action==='validate-draft'||action==='validate-final'){const final=action==='validate-final';state.validation=await api(`/api/reports/${reportId}/validate`,{method:'POST',body:{final_requested:final}});renderReport(reportId,screenId);return;}
     if(action==='publish'){await api(`/api/reports/${reportId}/publications`,{method:'POST',body:{publication_type:target.dataset.type,is_final:target.dataset.final==='true'}},false);toast('Document generation queued. Refresh status in a few moments.','success');renderReport(reportId,screenId);return;}
+    if(action==='dismiss-publication'){await api(`/api/reports/${reportId}/publications/${target.dataset.id}/dismiss`,{method:'POST'});toast('Failed publication attempt dismissed.','success');renderReport(reportId,screenId);return;}
     if(action==='refresh-report'){renderReport(reportId,screenId);return;}
     if(action==='admin-tab'){renderAdminTab(target.dataset.tab);return;}
     if(action==='new-user'){showNewUser();return;}

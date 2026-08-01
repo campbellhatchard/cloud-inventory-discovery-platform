@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from .config import Settings
-from .documents import convert_docx_to_pdf, generate_docx
+from .documents import convert_docx_to_pdf, generate_docx, refresh_docx_fields
 from .models import FileObject, Publication, Report, utcnow
 from .storage import ObjectStorage, build_storage_key
 
@@ -19,7 +19,9 @@ def process_publication(db: Session, publication_id: str, settings: Settings) ->
     db.commit()
     try:
         docx_bytes = generate_docx(db, report.id, settings, publication_type=publication.publication_type, is_final=publication.is_final)
-        pdf_bytes = convert_docx_to_pdf(docx_bytes, settings)
+        docx_bytes, pdf_bytes = refresh_docx_fields(docx_bytes, settings, emit_pdf=True)
+        if pdf_bytes is None:
+            pdf_bytes = convert_docx_to_pdf(docx_bytes, settings)
         storage = ObjectStorage(settings)
         stem = "-".join("".join(c if c.isalnum() else " " for c in report.title).split())[:90] or "site-discovery-report"
         suffix = "final" if publication.is_final else "draft"

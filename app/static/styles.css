@@ -354,3 +354,13 @@ tr:last-child td { border-bottom: 0; }
   .compiled-report-cover, .compiled-section { padding: 20px 16px; }
   .compiled-evidence { grid-template-columns: 1fr; }
 }
+
+/* v0.5.1 collaborative capture and report-level status */
+.report-status-control { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.report-status-control select { min-width: 155px; min-height: 36px; padding: 6px 30px 6px 9px; }
+.report-download-head { margin-top: 20px; }
+.report-publication-actions .btn[disabled] { opacity: .55; cursor: not-allowed; }
+@media (max-width: 720px) {
+  .report-status-control { width: 100%; justify-content: space-between; }
+  .report-status-control select { flex: 1; }
+}

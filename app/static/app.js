@@ -13,6 +13,7 @@ const state = {
   templates: [],
   capabilities: [],
   aiStatus: null,
+  storageStatus: null,
   validation: null,
   activeProspectTab: 'reports',
   reportNavScroll: 0,
@@ -392,9 +393,17 @@ function showDeleteReport() {
   showModal('Permanently delete report', `<p>This action is restricted to draft or merged source reports. Stored evidence and generated documents linked only to this report will also be deleted.</p><form id="delete-report-form"><div class="field"><label>Type the report title to confirm</label><input name="confirm_title" required></div><button class="btn btn-danger btn-wide" type="submit">Permanently delete report</button></form>`, '');
 }
 
-function sectionStateBadge(section) {
-  const cls = section.state === 'APPROVED' ? 'badge-success' : section.state === 'READY_FOR_REVIEW' ? 'badge-warning' : section.state === 'REMOVED' ? 'badge-danger' : 'badge-cyan';
-  return `<span class="badge ${cls}">${esc(section.state.replaceAll('_',' '))}</span>`;
+function reportStatusBadge(value) {
+  const cls = value === 'FINALIZED' ? 'badge-success' : value === 'READY_FOR_REVIEW' ? 'badge-warning' : value === 'MERGED' ? 'badge-warning' : 'badge-cyan';
+  return `<span class="badge ${cls}">${esc(value.replaceAll('_',' '))}</span>`;
+}
+
+function reportStatusControl(report) {
+  const stateValue = report.report.state;
+  if (canReview(report.access_scope) && ['DRAFT','READY_FOR_REVIEW'].includes(stateValue)) {
+    return `<label class="report-status-control"><span>Report status</span><select data-action="report-status" aria-label="Report status"><option value="DRAFT" ${stateValue==='DRAFT'?'selected':''}>Draft</option><option value="READY_FOR_REVIEW" ${stateValue==='READY_FOR_REVIEW'?'selected':''}>Ready for review</option></select></label>`;
+  }
+  return reportStatusBadge(stateValue);
 }
 
 async function loadReport(id) {
@@ -404,6 +413,7 @@ async function loadReport(id) {
   state.report = results[0]; state.capabilities = results[1];
   if (results[2]) state.users = results[2];
   try { state.aiStatus = await api('/api/ai/status'); } catch { state.aiStatus = null; }
+  try { state.storageStatus = await api('/api/storage/status'); } catch { state.storageStatus = null; }
 }
 
 function getActiveSection(sectionId) {
@@ -445,11 +455,11 @@ function reportSectionContent(section) {
   const answered = new Map(section.responses.map(r => [r.prompt_id, r]));
   const findings = report.findings.filter(f => f.section_id === section.id);
   const evidence = report.evidence.filter(e => e.section_id === section.id);
-  const assigneeOptions = (report.members || []).map(member => `<option value="${member.user_id}" ${section.assigned_to_user_id===member.user_id?'selected':''}>${esc(member.display_name || member.username)}</option>`).join('');
   return `
     <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions(section.id)}</select></div>
     <section class="card">
-      <div class="section-head"><div><div class="card-meta">${sectionStateBadge(section)} ${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar"><select class="section-assignee" data-action="section-assignee" aria-label="Assigned contributor"><option value="">Unassigned</option>${assigneeOptions}</select><select class="section-status" data-action="section-status" aria-label="Section status"><option value="NOT_STARTED" ${section.state==='NOT_STARTED'?'selected':''}>Not started</option><option value="IN_PROGRESS" ${section.state==='IN_PROGRESS'?'selected':''}>In progress</option><option value="READY_FOR_REVIEW" ${section.state==='READY_FOR_REVIEW'?'selected':''}>Ready for review</option>${canReview(report.access_scope)?`<option value="APPROVED" ${section.state==='APPROVED'?'selected':''}>Approved</option>`:''}</select>${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
+      <div class="section-head"><div><div class="card-meta">${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar">${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
+      <p class="help">This section is open for collaborative entry by anyone associated with the report. No assignment or section status is required.</p>
       <div class="field"><label for="section-narrative">Section narrative</label><textarea id="section-narrative" class="editor" data-section-id="${section.id}" placeholder="Write or refine the customer-facing narrative. Autosaves after you stop typing.">${esc(section.narrative)}</textarea><div id="narrative-save" class="save-state"></div></div>
     </section>
     <section class="card">
@@ -511,25 +521,32 @@ function reportPreviewSection(section) {
 function reportPreviewContent() {
   const report = state.report;
   const activeSections = report.sections.filter(section => section.state !== 'REMOVED');
-  const completed = activeSections.filter(section => ['READY_FOR_REVIEW','APPROVED'].includes(section.state));
-  const inProgress = activeSections.filter(section => section.state === 'IN_PROGRESS').length;
-  const notStarted = activeSections.filter(section => section.state === 'NOT_STARTED').length;
+  const contentSections = activeSections.filter(reportSectionHasContent);
+  const emptySections = activeSections.length - contentSections.length;
+  const storageConfigured = state.storageStatus?.configured === true;
+  const storageMessage = storageConfigured
+    ? `<div class="validation-item">Persistent document storage is configured.</div>`
+    : `<div class="validation-item WARNING">Persistent Cloudflare R2 storage is not configured. Draft Word/PDF downloads remain available; final publication, evidence, logos, and stored documents require R2.</div>`;
   return `
     <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions('report-preview')}</select></div>
     <section class="card report-tools-card">
-      <div class="section-head"><div><h2>Validate and Publish</h2><p class="help">Review the compiled report, check readiness, and generate controlled documents from one place.</p></div></div>
-      <div class="report-progress"><span><strong>${completed.length}</strong> complete</span><span><strong>${inProgress}</strong> in progress</span><span><strong>${notStarted}</strong> not started</span></div>
+      <div class="section-head"><div><h2>Report Review</h2><p class="help">The draft compiles automatically from every section containing reportable content. Section assignment and section status are not required.</p></div>${reportStatusControl(report)}</div>
+      <div class="report-progress"><span><strong>${contentSections.length}</strong> sections with content</span><span><strong>${emptySections}</strong> empty sections</span><span><strong>${report.report.revision}</strong> revision</span></div>
       <div class="toolbar"><button class="btn btn-ghost" data-action="validate-draft">Check Report</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary" data-action="validate-final">Check Final</button>':''}</div>
       ${state.validation?`<div class="validation-list">${state.validation.issues.map(item=>`<div class="validation-item ${item.severity}">${esc(item.message)}</div>`).join('') || '<div class="validation-item">No issues found.</div>'}</div>`:''}
-      <div class="card-actions report-publication-actions"><button class="btn btn-primary" data-action="publish" data-type="FULL_DISCOVERY" data-final="false">Generate Draft Report</button><button class="btn btn-ghost" data-action="publish" data-type="DEMO_BRIEF" data-final="false">Generate Demo Brief</button><button class="btn btn-ghost" data-action="publish" data-type="FOLLOW_UP_QUESTIONNAIRE" data-final="false">Generate Follow-up Questionnaire</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary" data-action="publish" data-type="FULL_DISCOVERY" data-final="true">Generate Final Report</button>':''}</div>
+      <div class="section-head report-download-head"><div><h3>Draft Downloads</h3><p class="help">Draft documents are generated directly and do not require persistent R2 storage.</p></div></div>
+      <div class="card-actions report-publication-actions"><a class="btn btn-primary" href="/api/reports/${report.report.id}/draft.docx">Download Draft Word</a><a class="btn btn-primary" href="/api/reports/${report.report.id}/draft.pdf">Download Draft PDF</a></div>
+      <div class="section-head report-download-head"><div><h3>Controlled Publication</h3><p class="help">Final and stored publications use persistent Cloudflare R2 object storage.</p></div></div>
+      ${storageMessage}
+      <div class="card-actions report-publication-actions"><button class="btn btn-ghost" data-action="publish" data-type="DEMO_BRIEF" data-final="false" ${storageConfigured?'':'disabled'}>Generate Demo Brief</button><button class="btn btn-ghost" data-action="publish" data-type="FOLLOW_UP_QUESTIONNAIRE" data-final="false" ${storageConfigured?'':'disabled'}>Generate Follow-up Questionnaire</button>${canOwn(report.access_scope)?`<button class="btn btn-secondary" data-action="publish" data-type="FULL_DISCOVERY" data-final="true" ${storageConfigured?'':'disabled'}>Generate Final Report</button>`:''}</div>
     </section>
     <section class="card">
-      <div class="section-head"><div><h2>Generated Documents</h2><p class="help">Generated Word and PDF files appear here when storage and document services are configured.</p></div><button class="btn btn-ghost btn-small" data-action="refresh-report">Refresh status</button></div>
-      <div class="generated-documents">${report.publications.map(item=>`<div class="finding"><strong>${esc(item.publication_type.replaceAll('_',' '))}</strong><span class="badge ${item.status==='COMPLETED'?'badge-success':item.status==='FAILED'?'badge-danger':'badge-warning'}">${esc(item.status)}</span>${item.error?`<p class="impact">${esc(item.error)}</p>`:''}<div class="card-actions">${item.docx_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.docx_file_id}">Word</a>`:''}${item.pdf_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.pdf_file_id}">PDF</a>`:''}</div></div>`).join('') || '<p class="help">No documents have been requested.</p>'}</div>
+      <div class="section-head"><div><h2>Generated Documents</h2><p class="help">Persisted Word and PDF files appear here after controlled publication.</p></div><button class="btn btn-ghost btn-small" data-action="refresh-report">Refresh status</button></div>
+      <div class="generated-documents">${report.publications.map(item=>`<div class="finding"><strong>${esc(item.publication_type.replaceAll('_',' '))}</strong><span class="badge ${item.status==='COMPLETED'?'badge-success':item.status==='FAILED'?'badge-danger':'badge-warning'}">${esc(item.status)}</span>${item.error?`<p class="impact">${esc(item.error)}</p>`:''}<div class="card-actions">${item.docx_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.docx_file_id}">Word</a>`:''}${item.pdf_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.pdf_file_id}">PDF</a>`:''}</div></div>`).join('') || '<p class="help">No persisted documents have been requested.</p>'}</div>
     </section>
     <section class="compiled-report card">
-      <div class="compiled-report-cover"><div class="card-meta"><span class="badge badge-cyan">REPORT REVIEW</span></div><h1>${esc(report.report.title)}</h1><p>Revision ${report.report.revision} · ${esc(report.report.report_kind)} · ${esc(report.report.state)}</p></div>
-      ${completed.length?completed.map(reportPreviewSection).join(''):'<div class="empty"><h2>No completed sections yet</h2><p>Sections appear here when their status is Ready for review or Approved.</p></div>'}
+      <div class="compiled-report-cover"><div class="card-meta"><span class="badge badge-cyan">REPORT REVIEW</span>${reportStatusBadge(report.report.state)}</div><h1>${esc(report.report.title)}</h1><p>Revision ${report.report.revision} · ${esc(report.report.report_kind)}</p></div>
+      ${contentSections.length?contentSections.map(reportPreviewSection).join(''):'<div class="empty"><h2>No reportable content yet</h2><p>As information is entered in any section it will appear here automatically.</p></div>'}
     </section>`;
 }
 
@@ -547,7 +564,7 @@ async function renderReport(id, sectionId = null) {
   app.innerHTML = shell(`
     <div class="page">
       <div class="breadcrumbs"><button data-action="go" data-route="#/prospects">Prospects</button><span>/</span><button data-action="go" data-route="#/prospect/${report.report.prospect_id}">Workspace</button><span>/</span><span>${esc(report.report.title)}</span></div>
-      <header class="page-header"><div><h1>${esc(report.report.title)}</h1><p>Revision ${report.report.revision} - ${esc(report.report.report_kind)} - ${esc(report.report.state)}</p></div><div class="toolbar"><span class="badge badge-cyan">${esc(report.access_scope)}</span><button class="btn btn-ghost" data-action="add-section">Add section</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary" data-action="merge-reports">Merge reports</button><button class="btn btn-danger" data-action="delete-report">Delete draft</button>':''}</div></header>
+      <header class="page-header"><div><h1>${esc(report.report.title)}</h1><p>Revision ${report.report.revision} - ${esc(report.report.report_kind)}</p></div><div class="toolbar"><span class="badge badge-cyan">${esc(report.access_scope)}</span>${reportStatusControl(report)}<button class="btn btn-ghost" data-action="add-section">Add section</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary" data-action="merge-reports">Merge reports</button><button class="btn btn-danger" data-action="delete-report">Delete draft</button>':''}</div></header>
       <div class="report-layout ${quickEntry || reportPreview ? 'quick-entry-layout' : ''}">
         ${sidebar}
         <main class="report-main">${quickEntry ? quickEntryContent() : reportPreview ? reportPreviewContent() : reportSectionContent(section)}</main>
@@ -837,7 +854,6 @@ async function handleClick(event) {
     if(action==='validate-draft'||action==='validate-final'){const final=action==='validate-final';state.validation=await api(`/api/reports/${reportId}/validate`,{method:'POST',body:{final_requested:final}});renderReport(reportId,screenId);return;}
     if(action==='publish'){await api(`/api/reports/${reportId}/publications`,{method:'POST',body:{publication_type:target.dataset.type,is_final:target.dataset.final==='true'}},false);toast('Document generation queued. Refresh status in a few moments.','success');renderReport(reportId,screenId);return;}
     if(action==='refresh-report'){renderReport(reportId,screenId);return;}
-    if(action==='section-status'){return;}
     if(action==='admin-tab'){renderAdminTab(target.dataset.tab);return;}
     if(action==='new-user'){showNewUser();return;}
     if(action==='new-capability'){showNewCapability();return;}
@@ -855,8 +871,7 @@ async function handleChange(event) {
     if(target.matches('[data-action="mobile-section"]')){navigateReportScreen(target.value);return;}
     if(target.matches('[data-action="quick-entry-area"]')){setQuickEntryArea(state.report.report.id,target.value);return;}
     if(target.id==='quick-entry-camera'||target.id==='quick-entry-file'){await uploadQuickEntryFiles(target);return;}
-    if(target.matches('[data-action="section-status"]')){const section=selectedSection();rememberReportNavScroll();await api(`/api/reports/${state.report.report.id}/sections/${section.id}`,{method:'PATCH',body:{state:target.value,expected_version:section.version}});toast('Section status updated.','success');renderReport(state.report.report.id,section.id);return;}
-    if(target.matches('[data-action="section-assignee"]')){const section=selectedSection();await api(`/api/reports/${state.report.report.id}/sections/${section.id}`,{method:'PATCH',body:{assigned_to_user_id:target.value||null,expected_version:section.version}});toast('Section assignment updated.','success');renderReport(state.report.report.id,section.id);return;}
+    if(target.matches('[data-action="report-status"]')){const reportId=state.report.report.id;const result=await api(`/api/reports/${reportId}`,{method:'PATCH',body:{state:target.value}});state.report.report.state=result.state;toast('Report status updated.','success');renderReport(reportId,currentReportScreen());return;}
   }catch(error){toast(error.message,'error');}
 }
 

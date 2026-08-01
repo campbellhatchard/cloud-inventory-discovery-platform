@@ -208,7 +208,7 @@ class ReportSection(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(250))
     process_module: Mapped[str | None] = mapped_column(String(100), index=True)
     display_order: Mapped[int] = mapped_column(Integer)
-    state: Mapped[str] = mapped_column(String(40), default="NOT_STARTED")
+    state: Mapped[str] = mapped_column(String(40), default="ACTIVE")
     required_on_final: Mapped[bool] = mapped_column(Boolean, default=False)
     removed_reason: Mapped[str | None] = mapped_column(Text)
     narrative: Mapped[str] = mapped_column(Text, default="")

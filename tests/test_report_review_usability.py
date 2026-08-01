@@ -64,7 +64,7 @@ def test_empty_optional_sections_do_not_block_final_validation(admin_session) ->
     assert "SECTION_NOT_REVIEWED" not in codes
 
 
-def test_started_section_requires_review_for_final(admin_session) -> None:
+def test_report_level_status_controls_final_validation(admin_session) -> None:
     client, me = admin_session
     _, report_id = _new_workspace(client, me)
     payload = client.get(f"/api/reports/{report_id}").json()
@@ -75,9 +75,20 @@ def test_started_section_requires_review_for_final(admin_session) -> None:
         headers=headers(me),
     )
     assert update.status_code == 200, update.text
-    result = client.post(f"/api/reports/{report_id}/validate", json={"final_requested": True}, headers=headers(me))
-    assert result.status_code == 200, result.text
-    assert "SECTION_NOT_REVIEWED" in {item["code"] for item in result.json()["issues"]}
+    draft_validation = client.post(f"/api/reports/{report_id}/validate", json={"final_requested": True}, headers=headers(me))
+    assert draft_validation.status_code == 200, draft_validation.text
+    codes = {item["code"] for item in draft_validation.json()["issues"]}
+    assert "SECTION_NOT_REVIEWED" not in codes
+    assert "REPORT_NOT_READY" in codes
+    status_update = client.patch(
+        f"/api/reports/{report_id}",
+        json={"state": "READY_FOR_REVIEW"},
+        headers=headers(me),
+    )
+    assert status_update.status_code == 200, status_update.text
+    final_validation = client.post(f"/api/reports/{report_id}/validate", json={"final_requested": True}, headers=headers(me))
+    assert final_validation.status_code == 200, final_validation.text
+    assert "REPORT_NOT_READY" not in {item["code"] for item in final_validation.json()["issues"]}
 
 
 def test_prospect_logo_round_trip_uses_prospect_header_endpoint(admin_session) -> None:
@@ -105,16 +116,22 @@ def test_frontend_report_review_and_navigation_contract() -> None:
     assert 'data-action="open-report-preview"' in app_js
     assert '<span>Report</span>' in app_js
     assert 'function reportPreviewContent()' in app_js
-    assert 'Validate and Publish' in app_js
+    assert 'Report Review' in app_js
     assert 'Generated Documents' in app_js
     assert 'function rememberReportNavScroll()' in app_js
     assert 'function restoreReportNavPosition(screenId)' in app_js
     assert 'data-action="upload-prospect-logo"' in app_js
+    assert 'data-action="report-status"' in app_js
+    assert '/draft.docx' in app_js
+    assert '/draft.pdf' in app_js
+    assert 'section-status' not in app_js
+    assert 'section-assignee' not in app_js
     assert 'Required for final' not in app_js
     assert 'aria-label="Required"' not in app_js
     assert 'name="required_on_final"' not in app_js
     assert '.compiled-report' in styles
     assert '.prospect-logo' in styles
+    assert '.report-status-control' in styles
 
 
 def test_migration_contract_for_existing_reports() -> None:

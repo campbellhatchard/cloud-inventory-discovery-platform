@@ -81,7 +81,7 @@ def test_full_capture_and_document_generation(admin_session):
     assert evidence.status_code == 200, evidence.text
     refreshed = client.get(f"/api/reports/{report_id}").json()
     refreshed_receiving = next(s for s in refreshed["sections"] if s["id"] == receiving["id"])
-    assert refreshed_receiving["state"] == "IN_PROGRESS"
+    assert refreshed_receiving["state"] == "ACTIVE"
 
     validation = client.post(f"/api/reports/{report_id}/validate", json={"final_requested": False}, headers=h)
     assert validation.status_code == 200
@@ -112,6 +112,8 @@ def test_full_capture_and_document_generation(admin_session):
 def test_final_publication_allows_empty_optional_sections(admin_session):
     client, me = admin_session
     _, report_id = create_report(client, me)
+    ready = client.patch(f"/api/reports/{report_id}", json={"state": "READY_FOR_REVIEW"}, headers=headers(me))
+    assert ready.status_code == 200, ready.text
     response = client.post(f"/api/reports/{report_id}/publications", json={"publication_type": "FULL_DISCOVERY", "is_final": True}, headers=headers(me))
     assert response.status_code == 200, response.text
     validation = response.json()["validation"]

@@ -36,7 +36,7 @@ from .models import (
     Site,
     User,
 )
-from .storage import ObjectStorage
+from .storage import ObjectStorage, StorageConfigurationError
 
 
 def _hex_color(value: str) -> RGBColor:
@@ -236,10 +236,13 @@ def _image_bytes_to_file(data: bytes, suffix: str = ".jpg") -> Path:
     return p
 
 
-def _add_evidence(doc: Document, db: Session, storage: ObjectStorage, evidence: Iterable[EvidenceItem]) -> None:
+def _add_evidence(doc: Document, db: Session, storage: ObjectStorage | None, evidence: Iterable[EvidenceItem]) -> None:
     for item in evidence:
         file_obj = db.scalar(select(FileObject).where(FileObject.evidence_id == item.id, FileObject.variant.in_(["WEB", "ORIGINAL"])).order_by(FileObject.variant.desc()))
         if not file_obj:
+            continue
+        if storage is None:
+            doc.add_paragraph(f"Evidence unavailable during generation: {file_obj.file_name} (persistent object storage is not configured)", style="Evidence Caption")
             continue
         try:
             data = storage.get_bytes(file_obj.storage_key)
@@ -275,10 +278,17 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
     if not prospect or not engagement or not brand:
         raise ValueError("Report dependencies are incomplete")
     owner = db.get(User, report.owner_id)
-    storage = ObjectStorage(settings)
+    storage: ObjectStorage | None = None
+    try:
+        storage = ObjectStorage(settings)
+    except StorageConfigurationError:
+        # Draft generation must remain available even when persistent R2 storage
+        # has not yet been configured. Stored evidence/custom branding is simply
+        # omitted with an explanatory note instead of aborting the document.
+        storage = None
     logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo-for-light-background-v0.4.1.png"
     custom_logo_path: Path | None = None
-    if brand.logo_storage_key:
+    if brand.logo_storage_key and storage is not None:
         try:
             fd, custom_name = tempfile.mkstemp(prefix="ci-discovery-logo-", suffix=".png")
             os.close(fd)

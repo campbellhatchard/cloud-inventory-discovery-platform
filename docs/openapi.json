@@ -1318,6 +1318,23 @@
         "title": "ReportDeleteRequest",
         "type": "object"
       },
+      "ReportUpdate": {
+        "properties": {
+          "state": {
+            "enum": [
+              "DRAFT",
+              "READY_FOR_REVIEW"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ReportUpdate",
+        "type": "object"
+      },
       "ResponseUpsert": {
         "properties": {
           "client_mutation_id": {
@@ -1433,17 +1450,6 @@
       },
       "SectionUpdate": {
         "properties": {
-          "assigned_to_user_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assigned To User Id"
-          },
           "display_order": {
             "anyOf": [
               {
@@ -1493,10 +1499,7 @@
             "anyOf": [
               {
                 "enum": [
-                  "NOT_STARTED",
-                  "IN_PROGRESS",
-                  "READY_FOR_REVIEW",
-                  "APPROVED",
+                  "ACTIVE",
                   "REMOVED"
                 ],
                 "type": "string"
@@ -1664,7 +1667,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.5.0"
+    "version": "0.5.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3118,6 +3121,51 @@
           }
         },
         "summary": "Get Report"
+      },
+      "patch": {
+        "operationId": "update_report_api_reports__report_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Report"
       }
     },
     "/api/reports/{report_id}/ai": {
@@ -3571,6 +3619,80 @@
           }
         },
         "summary": "Resolve Comment"
+      }
+    },
+    "/api/reports/{report_id}/draft.docx": {
+      "get": {
+        "operationId": "download_draft_docx_api_reports__report_id__draft_docx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Draft Docx"
+      }
+    },
+    "/api/reports/{report_id}/draft.pdf": {
+      "get": {
+        "operationId": "download_draft_pdf_api_reports__report_id__draft_pdf_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Draft Pdf"
       }
     },
     "/api/reports/{report_id}/evidence": {
@@ -4115,6 +4237,22 @@
           }
         },
         "summary": "Run Validation"
+      }
+    },
+    "/api/storage/status": {
+      "get": {
+        "operationId": "get_storage_status_api_storage_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Storage Status"
       }
     },
     "/api/users": {

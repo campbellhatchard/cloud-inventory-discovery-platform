@@ -99,6 +99,7 @@ from .schemas import (
     PublicationRequest,
     QuickCaptureRequest,
     ReportCreate,
+    ReportUpdate,
     ReportDeleteRequest,
     ResponseUpsert,
     ReviewDecision,
@@ -108,8 +109,9 @@ from .schemas import (
     UserCreate,
     ValidationRequest,
 )
-from .storage import ObjectStorage, build_storage_key, safe_filename
+from .storage import ObjectStorage, StorageConfigurationError, build_storage_key, safe_filename, storage_configuration_status
 from .validation import validate_report, validation_passed
+from .documents import convert_docx_to_pdf, generate_docx
 
 router = APIRouter(prefix="/api")
 
@@ -146,6 +148,13 @@ def _get_section(db: Session, section_id: str) -> ReportSection:
 
 def _increment_report(report: Report) -> None:
     report.revision += 1
+
+
+def _object_storage_or_503(settings: Settings) -> ObjectStorage:
+    try:
+        return ObjectStorage(settings)
+    except StorageConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _json_value(value: Any) -> Any:
@@ -405,7 +414,7 @@ def get_prospect_logo(
     if not prospect.logo_storage_key:
         raise HTTPException(404, "Prospect logo not found.")
     try:
-        storage = ObjectStorage(settings)
+        storage = _object_storage_or_503(settings)
         data = storage.get_bytes(prospect.logo_storage_key)
     except FileNotFoundError:
         raise HTTPException(404, "Prospect logo not found.")
@@ -444,7 +453,7 @@ async def upload_prospect_logo(
     old_key = prospect.logo_storage_key
     key = build_storage_key(prospect.id, "branding", uuid.uuid4().hex, "prospect-logo.png")
     try:
-        storage = ObjectStorage(settings)
+        storage = _object_storage_or_503(settings)
         stored = storage.put_bytes(key, logo_bytes, "image/png")
     except Exception:
         raise HTTPException(503, "Prospect logo storage is not configured for this environment.")
@@ -466,7 +475,7 @@ def export_prospect(prospect_id: str, user: User = Depends(enforce_password_chan
     if not prospect:
         raise HTTPException(404, "Prospect not found.")
     require_prospect_access(db, user, prospect_id, "OWNER")
-    storage = ObjectStorage(settings)
+    storage = _object_storage_or_503(settings)
     reports = list(db.scalars(select(Report).where(Report.prospect_id == prospect_id)).all())
     report_ids = [report.id for report in reports]
     engagements = list(db.scalars(select(Engagement).where(Engagement.prospect_id == prospect_id)).all())
@@ -583,7 +592,7 @@ def permanently_delete_prospect(prospect_id: str, payload: ProspectDeleteRequest
         raise HTTPException(409, "Prospect is under legal hold and cannot be deleted.")
     if not payload.confirm_exported or not prospect.last_exported_at:
         raise HTTPException(409, "A completed prospect export and explicit export confirmation are required before permanent deletion.")
-    storage = ObjectStorage(settings)
+    storage = _object_storage_or_503(settings)
     files = list(db.scalars(select(FileObject).where(FileObject.prospect_id == prospect.id)).all())
     for file_obj in files:
         try:
@@ -664,6 +673,43 @@ def create_report(prospect_id: str, payload: ReportCreate, user: User = Depends(
     return {"id": report.id, "title": report.title}
 
 
+@router.patch("/reports/{report_id}", dependencies=[Depends(require_csrf)])
+def update_report(report_id: str, payload: ReportUpdate, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report, "REVIEWER")
+    if report.state in {"MERGED", "DELETED", "FINALIZED"}:
+        raise HTTPException(409, f"Report status cannot be changed while the report is {report.state.lower()}.")
+    report.state = payload.state
+    _increment_report(report)
+    audit(db, actor=user, action="REPORT_STATUS_UPDATED", target_type="REPORT", target_id=report.id, prospect_id=report.prospect_id, metadata={"state": report.state})
+    db.commit()
+    return {"ok": True, "state": report.state, "revision": report.revision}
+
+
+@router.get("/storage/status")
+def get_storage_status(user: User = Depends(enforce_password_changed), settings: Settings = Depends(get_settings)):
+    return storage_configuration_status(settings)
+
+
+@router.get("/reports/{report_id}/draft.docx")
+def download_draft_docx(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    data = generate_docx(db, report.id, settings, publication_type="FULL_DISCOVERY", is_final=False)
+    filename = safe_filename(report.title) or "site-discovery-report"
+    return StreamingResponse(io.BytesIO(data), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="{filename}-r{report.revision}-draft.docx"'})
+
+
+@router.get("/reports/{report_id}/draft.pdf")
+def download_draft_pdf(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    docx_bytes = generate_docx(db, report.id, settings, publication_type="FULL_DISCOVERY", is_final=False)
+    pdf_bytes = convert_docx_to_pdf(docx_bytes, settings)
+    filename = safe_filename(report.title) or "site-discovery-report"
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}-r{report.revision}-draft.pdf"'})
+
+
 @router.get("/reports/{report_id}")
 def get_report(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
     report = _get_report(db, report_id)
@@ -689,7 +735,7 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     return {
         "report": {"id": report.id, "prospect_id": report.prospect_id, "engagement_id": report.engagement_id, "site_id": report.site_id, "title": report.title, "report_kind": report.report_kind, "state": report.state, "revision": report.revision, "owner_id": report.owner_id, "updated_at": _iso(report.updated_at)},
         "access_scope": scope,
-        "sections": [{"id": s.id, "stable_key": s.stable_key, "title": s.title, "process_module": s.process_module, "display_order": s.display_order, "state": s.state, "required_on_final": s.required_on_final, "removed_reason": s.removed_reason, "narrative": s.narrative, "version": s.version, "assigned_to_user_id": s.assigned_to_user_id, "responses": response_map.get(s.id, [])} for s in sections],
+        "sections": [{"id": s.id, "stable_key": s.stable_key, "title": s.title, "process_module": s.process_module, "display_order": s.display_order, "state": s.state, "required_on_final": s.required_on_final, "removed_reason": s.removed_reason, "narrative": s.narrative, "version": s.version, "responses": response_map.get(s.id, [])} for s in sections],
         "prompts_by_module": prompts_by_module,
         "findings": [{"id": f.id, "section_id": f.section_id, "finding_type": f.finding_type, "statement": f.statement, "impact": f.impact, "confidence": f.confidence, "status": f.status} for f in findings],
         "metrics": [{"id": m.id, "section_id": m.section_id, "name": m.name, "value_numeric": m.value_numeric, "value_text": m.value_text, "unit": m.unit, "period": m.period, "source": m.source, "confidence": m.confidence} for m in metrics],
@@ -789,9 +835,6 @@ def update_section(report_id: str, section_id: str, payload: SectionUpdate, user
         require_report_access(db, user, report, "OWNER")
         if not data.get("removed_reason") and not section.removed_reason:
             raise HTTPException(400, "A removal reason is required.")
-    if "assigned_to_user_id" in data and data["assigned_to_user_id"] is not None:
-        if data["assigned_to_user_id"] not in _report_member_user_ids(db, report):
-            raise HTTPException(400, "Section can only be assigned to a report member.")
     for key, value in data.items():
         setattr(section, key, value)
     section.version += 1
@@ -828,7 +871,6 @@ def upsert_response(report_id: str, section_id: str, payload: ResponseUpsert, us
     else:
         item = Response(report_id=report.id, section_id=section.id, prompt_id=prompt.id, narrative=payload.narrative, payload=payload.payload, client_mutation_id=payload.client_mutation_id, authored_by=user.id)
         db.add(item)
-    section.state = "IN_PROGRESS" if section.state == "NOT_STARTED" else section.state
     section.version += 1
     section.updated_by = user.id
     _increment_report(report)
@@ -850,7 +892,6 @@ def quick_capture(report_id: str, payload: QuickCaptureRequest, user: User = Dep
             return {"id": existing.id, "deduplicated": True}
     finding = Finding(report_id=report.id, section_id=section.id, finding_type=payload.finding_type, statement=payload.note, impact=payload.impact, confidence=payload.confidence, client_mutation_id=payload.client_mutation_id, created_by=user.id)
     db.add(finding)
-    section.state = "IN_PROGRESS" if section.state == "NOT_STARTED" else section.state
     section.updated_by = user.id
     section.version += 1
     _increment_report(report)
@@ -1081,7 +1122,7 @@ async def upload_evidence(
     )
     db.add(item)
     db.flush()
-    storage = ObjectStorage(settings)
+    storage = _object_storage_or_503(settings)
     original_key = build_storage_key(report.prospect_id, "evidence", item.id, filename)
     stored = storage.put_bytes(original_key, data, mime)
     original = FileObject(evidence_id=item.id, prospect_id=report.prospect_id, storage_key=stored.key, variant="ORIGINAL", file_name=filename, mime_type=stored.mime_type, size_bytes=stored.size, sha256=stored.sha256, scan_state="NOT_CONFIGURED")
@@ -1099,7 +1140,6 @@ async def upload_evidence(
         db.add(FileObject(evidence_id=item.id, prospect_id=report.prospect_id, storage_key=web_stored.key, variant="WEB", file_name=web_name, mime_type="image/jpeg", size_bytes=web_stored.size, sha256=web_stored.sha256, width=width, height=height, scan_state="NOT_CONFIGURED"))
     item.status = "READY"
     if section:
-        section.state = "IN_PROGRESS" if section.state == "NOT_STARTED" else section.state
         section.updated_by = user.id
         section.version += 1
     _increment_report(report)
@@ -1129,7 +1169,7 @@ def download_file(file_id: str, inline: bool = False, user: User = Depends(enfor
     if not file_obj:
         raise HTTPException(404, "File not found.")
     require_prospect_access(db, user, file_obj.prospect_id)
-    storage = ObjectStorage(settings)
+    storage = _object_storage_or_503(settings)
     url = storage.signed_download_url(file_obj.storage_key, file_obj.file_name, file_obj.mime_type)
     if url:
         return RedirectResponse(url)
@@ -1197,7 +1237,7 @@ def permanently_delete_report(report_id: str, payload: ReportDeleteRequest, user
     publication_file_ids = {file_id for publication in publications for file_id in (publication.docx_file_id, publication.pdf_file_id) if file_id}
     publication_files = list(db.scalars(select(FileObject).where(FileObject.id.in_(publication_file_ids))).all()) if publication_file_ids else []
     all_files = {item.id: item for item in evidence_files + publication_files}
-    storage = ObjectStorage(settings)
+    storage = _object_storage_or_503(settings)
     for file_obj in all_files.values():
         try:
             storage.delete(file_obj.storage_key)
@@ -1231,7 +1271,7 @@ def merge_reports(payload: MergeRequest, user: User = Depends(enforce_password_c
     db.flush()
     conflicts: list[dict[str, Any]] = []
     target_sections = {s.stable_key: s for s in db.scalars(select(ReportSection).where(ReportSection.report_id == target.id)).all()}
-    storage = ObjectStorage(settings)
+    storage = _object_storage_or_503(settings)
     for source in sources:
         for source_section in db.scalars(select(ReportSection).where(ReportSection.report_id == source.id).order_by(ReportSection.display_order)).all():
             target_section = target_sections.get(source_section.stable_key)
@@ -1512,7 +1552,7 @@ async def upload_branding_logo(brand_id: str, file: UploadFile = File(...), acto
             logo_bytes = output.getvalue()
     except Exception:
         raise HTTPException(400, "The uploaded logo could not be decoded as an image.")
-    storage = ObjectStorage(settings)
+    storage = _object_storage_or_503(settings)
     old_key = brand.logo_storage_key
     key = f"branding/{brand.id}/{uuid.uuid4().hex}/logo.png"
     stored = storage.put_bytes(key, logo_bytes, "image/png")

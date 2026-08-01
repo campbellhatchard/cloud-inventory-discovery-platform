@@ -71,6 +71,10 @@ class ReportCreate(BaseModel):
     report_kind: Literal["CAPTURE", "CONSOLIDATED"] = "CAPTURE"
 
 
+class ReportUpdate(BaseModel):
+    state: Literal["DRAFT", "READY_FOR_REVIEW"]
+
+
 class SectionCreate(BaseModel):
     title: str = Field(min_length=1, max_length=250)
     process_module: str | None = Field(default=None, max_length=100)
@@ -80,10 +84,9 @@ class SectionCreate(BaseModel):
 class SectionUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=250)
     narrative: str | None = None
-    state: Literal["NOT_STARTED", "IN_PROGRESS", "READY_FOR_REVIEW", "APPROVED", "REMOVED"] | None = None
+    state: Literal["ACTIVE", "REMOVED"] | None = None
     removed_reason: str | None = None
     display_order: int | None = None
-    assigned_to_user_id: str | None = None
     expected_version: int | None = Field(default=None, ge=1)
 
 

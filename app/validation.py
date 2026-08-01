@@ -31,6 +31,8 @@ def validate_report(db: Session, report: Report, final_requested: bool) -> list[
         add("REPORT_MERGED", "ERROR", "This source report has already been merged and cannot be published.")
     if report.state == "DELETED":
         add("REPORT_DELETED", "ERROR", "Deleted reports cannot be published.")
+    if final_requested and report.state not in {"READY_FOR_REVIEW", "FINALIZED"}:
+        add("REPORT_NOT_READY", "ERROR", "Set the report status to Ready for review before generating a final publication.")
 
     sections = list(db.scalars(select(ReportSection).where(ReportSection.report_id == report.id).order_by(ReportSection.display_order)).all())
     active_sections = [s for s in sections if s.state != "REMOVED"]
@@ -44,8 +46,6 @@ def validate_report(db: Session, report: Report, final_requested: bool) -> list[
         has_content = bool(section.narrative.strip()) or response_count > 0 or finding_count > 0 or evidence_count > 0
         if has_content and _PLACEHOLDER.search(section.narrative or ""):
             add("PLACEHOLDER_TEXT", "ERROR" if final_requested else "WARNING", f"Section '{section.title}' contains placeholder text.", section_id=section.id)
-        if final_requested and has_content and section.state not in {"APPROVED", "READY_FOR_REVIEW"}:
-            add("SECTION_NOT_REVIEWED", "ERROR", f"Section '{section.title}' contains content but has not reached review/approval state.", section_id=section.id)
 
     evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.report_id == report.id)).all())
     for item in evidence:

@@ -207,6 +207,20 @@
         "title": "Body_upload_evidence_api_reports__report_id__evidence_post",
         "type": "object"
       },
+      "Body_upload_prospect_logo_api_prospects__prospect_id__logo_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_prospect_logo_api_prospects__prospect_id__logo_post",
+        "type": "object"
+      },
       "BrandingUpdate": {
         "properties": {
           "accent_color": {
@@ -1650,7 +1664,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2710,6 +2724,88 @@
           }
         },
         "summary": "Export Prospect"
+      }
+    },
+    "/api/prospects/{prospect_id}/logo": {
+      "get": {
+        "operationId": "get_prospect_logo_api_prospects__prospect_id__logo_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prospect_id",
+            "required": true,
+            "schema": {
+              "title": "Prospect Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Prospect Logo"
+      },
+      "post": {
+        "operationId": "upload_prospect_logo_api_prospects__prospect_id__logo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prospect_id",
+            "required": true,
+            "schema": {
+              "title": "Prospect Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_prospect_logo_api_prospects__prospect_id__logo_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Prospect Logo"
       }
     },
     "/api/prospects/{prospect_id}/members": {

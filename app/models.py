@@ -65,6 +65,7 @@ class Prospect(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(30), default="ACTIVE")
     retention_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     legal_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    logo_storage_key: Mapped[str | None] = mapped_column(Text)
     archive_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))

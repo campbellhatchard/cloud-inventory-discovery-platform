@@ -15,6 +15,7 @@ const state = {
   aiStatus: null,
   validation: null,
   activeProspectTab: 'reports',
+  reportNavScroll: 0,
   saveTimers: new Map(),
   route: null,
 };
@@ -94,7 +95,30 @@ function quickEntrySection(value) {
 }
 function reportSectionOptions(selectedId = '') {
   const sections = state.report.sections.filter(section => section.state !== 'REMOVED');
-  return `<option value="quick-entry" ${selectedId === 'quick-entry' ? 'selected' : ''}>Quick Entry</option>${sections.map(section => `<option value="${section.id}" ${section.id === selectedId ? 'selected' : ''}>${esc(section.title)}</option>`).join('')}`;
+  return `<option value="quick-entry" ${selectedId === 'quick-entry' ? 'selected' : ''}>Quick Entry</option>${sections.map(section => `<option value="${section.id}" ${section.id === selectedId ? 'selected' : ''}>${esc(section.title)}</option>`).join('')}<option value="report-preview" ${selectedId === 'report-preview' ? 'selected' : ''}>Report</option>`;
+}
+
+function rememberReportNavScroll() {
+  const sidebar = document.querySelector('.report-sidebar');
+  if (sidebar) state.reportNavScroll = sidebar.scrollTop;
+}
+function navigateReportScreen(screenId) {
+  rememberReportNavScroll();
+  location.hash = `#/report/${state.report.report.id}/${screenId}`;
+}
+function restoreReportNavPosition(screenId) {
+  const sidebar = document.querySelector('.report-sidebar');
+  const active = sidebar?.querySelector('.section-nav button.active');
+  if (!sidebar || !active) return;
+  sidebar.scrollTop = state.reportNavScroll || 0;
+  const top = active.offsetTop;
+  const bottom = top + active.offsetHeight;
+  const viewportTop = sidebar.scrollTop;
+  const viewportBottom = viewportTop + sidebar.clientHeight;
+  if (top < viewportTop + 18 || bottom > viewportBottom - 70) {
+    sidebar.scrollTop = Math.max(0, top - Math.round(sidebar.clientHeight * 0.35));
+  }
+  state.reportNavScroll = sidebar.scrollTop;
 }
 
 function toast(message, type = '') {
@@ -320,7 +344,7 @@ async function renderProspect(id, tab = state.activeProspectTab) {
   app.innerHTML = shell(`
     <div class="page">
       <div class="breadcrumbs"><button data-action="go" data-route="#/prospects">Prospects</button><span>/</span><span>${esc(p.name)}</span></div>
-      <header class="page-header"><div><h1>${esc(p.name)}</h1><p>${esc(p.opportunity || 'No opportunity overview has been entered.')}</p><p class="help">Last export: ${fmtDate(p.last_exported_at)}</p></div><div class="toolbar"><span class="badge badge-cyan">${esc(data.access_scope)}</span><span class="badge">Retention ${fmtDate(p.retention_due_at)}</span>${canOwn(data.access_scope)?`<a class="btn btn-ghost" href="/api/prospects/${p.id}/export">Export workspace</a><button class="btn btn-secondary" data-action="archive-prospect">Archive</button>`:''}</div></header>
+      <header class="page-header prospect-header"><div class="prospect-identity">${p.logo_url?`<img class="prospect-logo" src="${esc(p.logo_url)}" alt="${esc(p.name)} logo">`:'<div class="prospect-logo-placeholder" aria-hidden="true">Logo</div>'}<div><h1>${esc(p.name)}</h1><p>${esc(p.opportunity || 'No opportunity overview has been entered.')}</p><p class="help">Last export: ${fmtDate(p.last_exported_at)}</p></div></div><div class="toolbar"><span class="badge badge-cyan">${esc(data.access_scope)}</span><span class="badge">Retention ${fmtDate(p.retention_due_at)}</span>${canOwn(data.access_scope)?`<button class="btn btn-ghost" data-action="upload-prospect-logo">${p.logo_url?'Change logo':'Upload logo'}</button><a class="btn btn-ghost" href="/api/prospects/${p.id}/export">Export workspace</a><button class="btn btn-secondary" data-action="archive-prospect">Archive</button>`:''}</div></header>
       <nav class="tabs"><button class="tab ${tab==='reports'?'active':''}" data-action="prospect-tab" data-tab="reports">Reports</button><button class="tab ${tab==='sites'?'active':''}" data-action="prospect-tab" data-tab="sites">Sites</button><button class="tab ${tab==='engagements'?'active':''}" data-action="prospect-tab" data-tab="engagements">Engagements</button><button class="tab ${tab==='team'?'active':''}" data-action="prospect-tab" data-tab="team">Team</button></nav>
       ${panel}
     </div>`, 'prospects');
@@ -352,6 +376,11 @@ async function showAddProspectMember() {
   const existing = new Set(state.prospect.members.map(m => m.user_id));
   const users = state.users.filter(u => !existing.has(u.id)).map(u => `<option value="${u.id}">${esc(u.display_name || u.username)} - ${esc(u.email)}</option>`).join('');
   showModal('Add prospect team member', `<form id="prospect-member-form"><div class="field"><label>User</label><select name="user_id" required>${users}</select></div><div class="field"><label>Scope</label><select name="role_scope"><option>CONTRIBUTOR</option><option>REVIEWER</option><option>OWNER</option></select></div><button class="btn btn-primary btn-wide" type="submit">Add or update member</button></form>`, '');
+}
+
+function showProspectLogoUpload() {
+  const p = state.prospect.prospect;
+  showModal('Upload prospect logo', `<p>Upload a PNG, JPG, or other browser-supported image. The logo will appear in this prospect header.</p><form id="prospect-logo-form"><input type="hidden" name="prospect_id" value="${p.id}"><div class="field"><label>Logo image</label><input name="file" type="file" accept="image/*" required></div><button class="btn btn-primary btn-wide" type="submit">Upload logo</button></form>`, '');
 }
 
 function showArchiveProspect() {
@@ -420,12 +449,12 @@ function reportSectionContent(section) {
   return `
     <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions(section.id)}</select></div>
     <section class="card">
-      <div class="section-head"><div><div class="card-meta">${sectionStateBadge(section)} ${section.required_on_final?'<span class="badge badge-danger">Required for final</span>':''} ${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar"><select class="section-assignee" data-action="section-assignee" aria-label="Assigned contributor"><option value="">Unassigned</option>${assigneeOptions}</select><select class="section-status" data-action="section-status" aria-label="Section status"><option value="NOT_STARTED" ${section.state==='NOT_STARTED'?'selected':''}>Not started</option><option value="IN_PROGRESS" ${section.state==='IN_PROGRESS'?'selected':''}>In progress</option><option value="READY_FOR_REVIEW" ${section.state==='READY_FOR_REVIEW'?'selected':''}>Ready for review</option>${canReview(report.access_scope)?`<option value="APPROVED" ${section.state==='APPROVED'?'selected':''}>Approved</option>`:''}</select>${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
+      <div class="section-head"><div><div class="card-meta">${sectionStateBadge(section)} ${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar"><select class="section-assignee" data-action="section-assignee" aria-label="Assigned contributor"><option value="">Unassigned</option>${assigneeOptions}</select><select class="section-status" data-action="section-status" aria-label="Section status"><option value="NOT_STARTED" ${section.state==='NOT_STARTED'?'selected':''}>Not started</option><option value="IN_PROGRESS" ${section.state==='IN_PROGRESS'?'selected':''}>In progress</option><option value="READY_FOR_REVIEW" ${section.state==='READY_FOR_REVIEW'?'selected':''}>Ready for review</option>${canReview(report.access_scope)?`<option value="APPROVED" ${section.state==='APPROVED'?'selected':''}>Approved</option>`:''}</select>${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
       <div class="field"><label for="section-narrative">Section narrative</label><textarea id="section-narrative" class="editor" data-section-id="${section.id}" placeholder="Write or refine the customer-facing narrative. Autosaves after you stop typing.">${esc(section.narrative)}</textarea><div id="narrative-save" class="save-state"></div></div>
     </section>
     <section class="card">
       <div class="section-head"><div><h2>Guided discovery questions</h2><p class="help">Structured answers preserve evidence and can later be converted into approved narrative.</p></div></div>
-      <div class="prompt-list">${prompts.map(p => { const r=answered.get(p.id); return `<article class="prompt-card ${p.required_on_final?'required':''}"><div class="prompt-question"><span>${esc(p.question)}</span>${p.required_on_final?'<span class="badge badge-danger">Required</span>':''}</div>${p.answer_type==='PHOTO'?`<button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button>`:`<textarea class="prompt-answer" data-prompt-id="${p.id}" data-response-version="${r?.version || ''}" placeholder="Capture the answer, facts, assumptions, and examples.">${esc(r?.narrative || '')}</textarea><div class="save-state" data-save-for="${p.id}"></div>`}</article>`; }).join('')}</div>
+      <div class="prompt-list">${prompts.map(p => { const r=answered.get(p.id); return `<article class="prompt-card"><div class="prompt-question"><span>${esc(p.question)}</span></div>${p.answer_type==='PHOTO'?`<button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button>`:`<textarea class="prompt-answer" data-prompt-id="${p.id}" data-response-version="${r?.version || ''}" placeholder="Capture the answer, facts, assumptions, and examples.">${esc(r?.narrative || '')}</textarea><div class="save-state" data-save-for="${p.id}"></div>`}</article>`; }).join('')}</div>
     </section>
     <section class="card" id="findings"><div class="section-head"><div><h2>Findings</h2><p class="help">Facts and interpretations should remain traceable to the section evidence.</p></div><button class="btn btn-ghost btn-small" data-action="new-finding">Add detailed finding</button></div>${findings.map(f => `<article class="finding"><div class="card-meta"><span class="badge">${esc(f.finding_type.replaceAll('_',' '))}</span><span>Confidence: ${esc(f.confidence)}</span></div><p>${esc(f.statement)}</p>${f.impact?`<p class="impact"><strong>Impact:</strong> ${esc(f.impact)}</p>`:''}</article>`).join('') || '<p class="help">No findings have been captured for this section.</p>'}</section>
     <section class="card" id="photos"><div class="section-head"><div><h2>Site photographs and attachments</h2><p class="help">Photographs and attachments routed from Quick Entry appear here for review and publication.</p></div><button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button></div><div class="evidence-grid">${evidence.map(e => `<article class="evidence-card"><div class="evidence-thumb">${e.file?.mime_type?.startsWith('image/')?`<img src="/api/files/${e.file.id}?inline=true" alt="${esc(e.caption || e.file.file_name)}" loading="lazy">`:'Attachment'}</div><div class="evidence-body"><strong>${esc(e.caption || e.file?.file_name || 'Evidence')}</strong><div class="card-meta"><span>${esc(e.placement)}</span><span>${e.file?bytes(e.file.size_bytes):''}</span><span class="badge">${esc(e.extraction_state || 'NOT APPLICABLE')}</span></div>${e.file?`<a href="/api/files/${e.file.id}" target="_blank">Open file</a>`:''}${canReview(report.access_scope)?`<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="true">Include</button><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="false">Supporting only</button></div>`:''}</div></article>`).join('')}</div></section>`;
@@ -445,35 +474,99 @@ function reportInspector(section) {
       <section class="inspector-card"><h3>Benefits and baselines</h3><button class="btn btn-ghost btn-small btn-wide" data-action="new-benefit">Add benefit statement</button>${benefits.map(b=>`<div class="finding"><p>${esc(b.statement)}</p><div class="card-meta"><span>${esc(b.measure_type)}</span><span class="badge ${b.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(b.approval_state)}</span></div>${canR&&b.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
       <section class="inspector-card"><h3>AI assistance</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p><button class="btn btn-ghost btn-small btn-wide" data-action="request-ai" ${state.aiStatus?.policy?.allowed?'':'disabled'}>Draft from evidence</button>${suggestions.map(s=>`<details class="accordion"><summary>${esc(s.purpose)} - ${esc(s.review_state)}</summary><div class="accordion-body"><p>${esc(s.content.suggested_text || s.content.summary || JSON.stringify(s.content))}</p>${canR&&s.review_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-ai" data-id="${s.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-ai" data-id="${s.id}" data-decision="REJECTED">Reject</button></div>`:''}</div></details>`).join('')}</section>
       <section class="inspector-card"><h3>Collaboration comments</h3><form id="comment-form"><input type="hidden" name="section_id" value="${section.id}"><div class="field"><label class="sr-only">Comment</label><textarea name="body" required placeholder="Add a review note, question, or follow-up request."></textarea></div><button class="btn btn-ghost btn-small btn-wide" type="submit">Add comment</button></form>${comments.map(c=>`<div class="finding"><div class="card-meta"><strong>${esc(c.author_name)}</strong><span>${fmtDate(c.created_at)}</span></div><p>${esc(c.body)}</p><span class="badge ${c.status==='RESOLVED'?'badge-success':'badge-warning'}">${esc(c.status)}</span>${canR&&c.status==='OPEN'?`<button class="btn btn-ghost btn-small" data-action="resolve-comment" data-id="${c.id}">Resolve</button>`:''}</div>`).join('') || '<p class="help">No comments for this section.</p>'}</section>
-      <section class="inspector-card"><h3>Validate and publish</h3><div class="toolbar"><button class="btn btn-ghost btn-small" data-action="validate-draft">Check draft</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary btn-small" data-action="validate-final">Check final</button>':''}</div>${state.validation?`<div class="validation-list">${state.validation.issues.map(i=>`<div class="validation-item ${i.severity}">${esc(i.message)}</div>`).join('') || '<div class="validation-item">No issues found.</div>'}</div>`:''}<div class="card-actions"><button class="btn btn-primary btn-small" data-action="publish" data-type="FULL_DISCOVERY" data-final="false">Draft DOCX/PDF</button><button class="btn btn-ghost btn-small" data-action="publish" data-type="DEMO_BRIEF" data-final="false">Demo brief</button><button class="btn btn-ghost btn-small" data-action="publish" data-type="FOLLOW_UP_QUESTIONNAIRE" data-final="false">Questionnaire</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary btn-small" data-action="publish" data-type="FULL_DISCOVERY" data-final="true">Generate final</button>':''}</div></section>
-      <section class="inspector-card"><h3>Generated documents</h3>${report.publications.map(p=>`<div class="finding"><div><strong>${esc(p.publication_type.replaceAll('_',' '))}</strong></div><span class="badge ${p.status==='COMPLETED'?'badge-success':p.status==='FAILED'?'badge-danger':'badge-warning'}">${esc(p.status)}</span>${p.error?`<p class="impact">${esc(p.error)}</p>`:''}<div class="card-actions">${p.docx_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${p.docx_file_id}">Word</a>`:''}${p.pdf_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${p.pdf_file_id}">PDF</a>`:''}</div></div>`).join('') || '<p class="help">No publications requested.</p>'}<button class="btn btn-ghost btn-small btn-wide" data-action="refresh-report">Refresh status</button></section>
     </aside>`;
+}
+
+function reportSectionHasContent(section) {
+  const report = state.report;
+  return Boolean(
+    section.narrative?.trim() ||
+    section.responses?.some(response => (response.narrative || '').trim() || response.payload) ||
+    report.findings.some(item => item.section_id === section.id && item.status !== 'REJECTED') ||
+    report.evidence.some(item => item.section_id === section.id && ['READY','AVAILABLE'].includes(item.status))
+  );
+}
+
+function reportPreviewSection(section) {
+  const report = state.report;
+  const responses = (section.responses || []).filter(response => (response.narrative || '').trim() || response.payload);
+  const findings = report.findings.filter(item => item.section_id === section.id && item.status !== 'REJECTED');
+  const findingIds = new Set(findings.map(item => item.id));
+  const mappings = report.capability_mappings.filter(item => findingIds.has(item.finding_id) && item.approval_state === 'APPROVED');
+  const benefits = report.benefits.filter(item => item.approval_state === 'APPROVED' && (!item.finding_id || findingIds.has(item.finding_id)));
+  const evidence = report.evidence.filter(item => item.section_id === section.id && ['READY','AVAILABLE'].includes(item.status) && item.placement === 'INLINE');
+  const noContent = !reportSectionHasContent(section);
+  return `<article class="compiled-section">
+    <h2>${esc(section.title)}</h2>
+    ${section.narrative?.trim()?`<div class="compiled-narrative">${esc(section.narrative).replaceAll('\n','<br>')}</div>`:''}
+    ${responses.length?`<h3>Discovery Responses</h3>${responses.map(response=>`<div class="compiled-response"><strong>${esc(response.question)}</strong><p>${esc(response.narrative || JSON.stringify(response.payload || {}))}</p></div>`).join('')}`:''}
+    ${findings.length?`<h3>Current-State Findings</h3><ul>${findings.map(item=>`<li><strong>${esc(item.finding_type.replaceAll('_',' '))}:</strong> ${esc(item.statement)}${item.impact?`<div class="help"><strong>Impact:</strong> ${esc(item.impact)}</div>`:''}</li>`).join('')}</ul>`:''}
+    ${mappings.length?`<h3>Cloud Inventory Functionality</h3><ul>${mappings.map(item=>`<li><strong>${esc(item.capability_name)}:</strong> ${esc(item.rationale)}</li>`).join('')}</ul>`:''}
+    ${benefits.length?`<h3>Benefits</h3><ul>${benefits.map(item=>`<li>${esc(item.statement)}</li>`).join('')}</ul>`:''}
+    ${evidence.length?`<h3>Site Photographs and Evidence</h3><div class="compiled-evidence">${evidence.map(item=>`<div>${item.file?.mime_type?.startsWith('image/')?`<img src="/api/files/${item.file.id}?inline=true" alt="${esc(item.caption || item.file.file_name)}" loading="lazy">`:''}<p>${esc(item.caption || item.file?.file_name || 'Evidence')}</p></div>`).join('')}</div>`:''}
+    ${noContent?'<p class="help">This section is marked complete but contains no reportable content.</p>':''}
+  </article>`;
+}
+
+function reportPreviewContent() {
+  const report = state.report;
+  const activeSections = report.sections.filter(section => section.state !== 'REMOVED');
+  const completed = activeSections.filter(section => ['READY_FOR_REVIEW','APPROVED'].includes(section.state));
+  const inProgress = activeSections.filter(section => section.state === 'IN_PROGRESS').length;
+  const notStarted = activeSections.filter(section => section.state === 'NOT_STARTED').length;
+  return `
+    <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions('report-preview')}</select></div>
+    <section class="card report-tools-card">
+      <div class="section-head"><div><h2>Validate and Publish</h2><p class="help">Review the compiled report, check readiness, and generate controlled documents from one place.</p></div></div>
+      <div class="report-progress"><span><strong>${completed.length}</strong> complete</span><span><strong>${inProgress}</strong> in progress</span><span><strong>${notStarted}</strong> not started</span></div>
+      <div class="toolbar"><button class="btn btn-ghost" data-action="validate-draft">Check Report</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary" data-action="validate-final">Check Final</button>':''}</div>
+      ${state.validation?`<div class="validation-list">${state.validation.issues.map(item=>`<div class="validation-item ${item.severity}">${esc(item.message)}</div>`).join('') || '<div class="validation-item">No issues found.</div>'}</div>`:''}
+      <div class="card-actions report-publication-actions"><button class="btn btn-primary" data-action="publish" data-type="FULL_DISCOVERY" data-final="false">Generate Draft Report</button><button class="btn btn-ghost" data-action="publish" data-type="DEMO_BRIEF" data-final="false">Generate Demo Brief</button><button class="btn btn-ghost" data-action="publish" data-type="FOLLOW_UP_QUESTIONNAIRE" data-final="false">Generate Follow-up Questionnaire</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary" data-action="publish" data-type="FULL_DISCOVERY" data-final="true">Generate Final Report</button>':''}</div>
+    </section>
+    <section class="card">
+      <div class="section-head"><div><h2>Generated Documents</h2><p class="help">Generated Word and PDF files appear here when storage and document services are configured.</p></div><button class="btn btn-ghost btn-small" data-action="refresh-report">Refresh status</button></div>
+      <div class="generated-documents">${report.publications.map(item=>`<div class="finding"><strong>${esc(item.publication_type.replaceAll('_',' '))}</strong><span class="badge ${item.status==='COMPLETED'?'badge-success':item.status==='FAILED'?'badge-danger':'badge-warning'}">${esc(item.status)}</span>${item.error?`<p class="impact">${esc(item.error)}</p>`:''}<div class="card-actions">${item.docx_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.docx_file_id}">Word</a>`:''}${item.pdf_file_id?`<a class="btn btn-ghost btn-small" href="/api/files/${item.pdf_file_id}">PDF</a>`:''}</div></div>`).join('') || '<p class="help">No documents have been requested.</p>'}</div>
+    </section>
+    <section class="compiled-report card">
+      <div class="compiled-report-cover"><div class="card-meta"><span class="badge badge-cyan">REPORT REVIEW</span></div><h1>${esc(report.report.title)}</h1><p>Revision ${report.report.revision} · ${esc(report.report.report_kind)} · ${esc(report.report.state)}</p></div>
+      ${completed.length?completed.map(reportPreviewSection).join(''):'<div class="empty"><h2>No completed sections yet</h2><p>Sections appear here when their status is Ready for review or Approved.</p></div>'}
+    </section>`;
 }
 
 async function renderReport(id, sectionId = null) {
   setLoading();
   await loadReport(id);
   const report = state.report;
-  const quickEntry = !sectionId || sectionId === 'quick-entry';
-  const section = quickEntry ? null : getActiveSection(sectionId);
-  if (!quickEntry && !section) { toast('Report contains no sections.', 'error'); return; }
+  const screenId = sectionId || 'quick-entry';
+  const quickEntry = screenId === 'quick-entry';
+  const reportPreview = screenId === 'report-preview';
+  const section = (!quickEntry && !reportPreview) ? getActiveSection(screenId) : null;
+  if (!quickEntry && !reportPreview && !section) { toast('Report contains no sections.', 'error'); return; }
   const sections = report.sections;
+  const sidebar = `<aside class="report-sidebar"><div class="section-nav"><button class="${quickEntry?'active':''}" data-action="open-quick-entry"><span>Quick Entry</span></button>${sections.map(item=>`<button class="${section&&item.id===section.id?'active':''} ${item.state==='REMOVED'?'removed':''}" data-action="open-section" data-id="${item.id}"><span>${esc(item.title)}</span></button>`).join('')}<button class="report-nav-final ${reportPreview?'active':''}" data-action="open-report-preview"><span>Report</span></button></div></aside>`;
   app.innerHTML = shell(`
     <div class="page">
       <div class="breadcrumbs"><button data-action="go" data-route="#/prospects">Prospects</button><span>/</span><button data-action="go" data-route="#/prospect/${report.report.prospect_id}">Workspace</button><span>/</span><span>${esc(report.report.title)}</span></div>
       <header class="page-header"><div><h1>${esc(report.report.title)}</h1><p>Revision ${report.report.revision} - ${esc(report.report.report_kind)} - ${esc(report.report.state)}</p></div><div class="toolbar"><span class="badge badge-cyan">${esc(report.access_scope)}</span><button class="btn btn-ghost" data-action="add-section">Add section</button>${canOwn(report.access_scope)?'<button class="btn btn-secondary" data-action="merge-reports">Merge reports</button><button class="btn btn-danger" data-action="delete-report">Delete draft</button>':''}</div></header>
-      <div class="report-layout ${quickEntry ? 'quick-entry-layout' : ''}">
-        <aside class="report-sidebar"><div class="section-nav"><button class="${quickEntry?'active':''}" data-action="open-quick-entry"><span>Quick Entry</span></button>${sections.map(s=>`<button class="${!quickEntry&&s.id===section.id?'active':''} ${s.state==='REMOVED'?'removed':''}" data-action="open-section" data-id="${s.id}"><span>${esc(s.title)}</span>${s.required_on_final?'<span aria-label="Required">*</span>':''}</button>`).join('')}</div></aside>
-        <main class="report-main">${quickEntry ? quickEntryContent() : reportSectionContent(section)}</main>
-        ${quickEntry ? '' : reportInspector(section)}
+      <div class="report-layout ${quickEntry || reportPreview ? 'quick-entry-layout' : ''}">
+        ${sidebar}
+        <main class="report-main">${quickEntry ? quickEntryContent() : reportPreview ? reportPreviewContent() : reportSectionContent(section)}</main>
+        ${quickEntry || reportPreview ? '' : reportInspector(section)}
       </div>
     </div>`, 'prospects');
   updateConnection();
+  requestAnimationFrame(() => restoreReportNavPosition(screenId));
 }
 
 function selectedSection() {
   const parts = location.hash.split('/');
-  return getActiveSection(parts[3]);
+  const screenId = parts[3];
+  if (!screenId || screenId === 'quick-entry' || screenId === 'report-preview') return null;
+  return state.report.sections.find(section => section.id === screenId) || null;
+}
+function currentReportScreen() {
+  const parts = location.hash.split('/');
+  return parts[3] || 'quick-entry';
 }
 
 function scheduleNarrativeSave(sectionId, value, statusElement) {
@@ -524,7 +617,7 @@ function showDetailedFinding() {
   showModal('Add finding', `<form id="finding-form"><div class="field"><label>Finding type</label><select name="finding_type"><option>OBSERVATION</option><option>PAIN_POINT</option><option>RISK</option><option>GAP</option><option>STRENGTH</option><option>OPPORTUNITY</option></select></div><div class="field"><label>Finding</label><textarea name="statement" required></textarea></div><div class="field"><label>Impact</label><textarea name="impact"></textarea></div><div class="field"><label>Confidence</label><select name="confidence"><option>HIGH</option><option selected>MEDIUM</option><option>LOW</option></select></div><button class="btn btn-primary btn-wide" type="submit">Add finding</button></form>`, '');
 }
 function showAddSection() {
-  showModal('Add report section', `<form id="section-form"><div class="field"><label>Section title</label><input name="title" required></div><div class="field"><label>Process module</label><select name="process_module"><option value="">General</option>${['RECEIVING','PUTAWAY','TRANSFER','ORDER_MANAGEMENT','PICKING','PACKING','SHIPPING','CYCLE_COUNT','WORK_ORDERS','PRINTING','FIELD_INVENTORY','MANUFACTURING'].map(x=>`<option>${x}</option>`).join('')}</select></div><label><input name="required_on_final" type="checkbox"> Required on final</label><button class="btn btn-primary btn-wide" type="submit">Add section</button></form>`, '');
+  showModal('Add report section', `<form id="section-form"><div class="field"><label>Section title</label><input name="title" required></div><div class="field"><label>Process module</label><select name="process_module"><option value="">General</option>${['RECEIVING','PUTAWAY','TRANSFER','ORDER_MANAGEMENT','PICKING','PACKING','SHIPPING','CYCLE_COUNT','WORK_ORDERS','PRINTING','FIELD_INVENTORY','MANUFACTURING'].map(x=>`<option>${x}</option>`).join('')}</select></div><p class="help">All report sections and discovery questions are optional.</p><button class="btn btn-primary btn-wide" type="submit">Add section</button></form>`, '');
 }
 function showRemoveSection() {
   const section = selectedSection();
@@ -673,6 +766,7 @@ async function handleSubmit(event) {
     if(form.id==='engagement-form'){const o=formObject(form);if(!o.site_id)o.site_id=null;if(!o.survey_date)o.survey_date=null;await api(`/api/prospects/${prospectId}/engagements`,{method:'POST',body:o});closeModal();toast('Engagement added.','success');renderProspect(prospectId,'engagements');return;}
     if(form.id==='report-form'){const o=formObject(form);const result=await api(`/api/prospects/${prospectId}/reports`,{method:'POST',body:o});closeModal();if(result.id)location.hash=`#/report/${result.id}`;return;}
     if(form.id==='prospect-member-form'){const fd=new FormData(form);await api(`/api/prospects/${prospectId}/members`,{method:'POST',body:fd});closeModal();renderProspect(prospectId,'team');return;}
+    if(form.id==='prospect-logo-form'){const fd=new FormData(form);const id=fd.get('prospect_id');fd.delete('prospect_id');await api(`/api/prospects/${id}/logo`,{method:'POST',body:fd},false);closeModal();toast('Prospect logo updated.','success');renderProspect(id,state.activeProspectTab);return;}
     if(form.id==='archive-prospect-form'){await api(`/api/prospects/${prospectId}/archive`,{method:'POST',body:formObject(form)});closeModal();toast('Prospect archived.','success');renderProspect(prospectId);return;}
     const reportId=state.report?.report?.id; const section=selectedSection();
     if(form.id==='quick-entry-note-form'){
@@ -718,29 +812,31 @@ async function handleClick(event) {
     if(action==='new-engagement'){showNewEngagement();return;}
     if(action==='new-report'){showNewReport();return;}
     if(action==='add-prospect-member'){showAddProspectMember();return;}
+    if(action==='upload-prospect-logo'){showProspectLogoUpload();return;}
     if(action==='archive-prospect'){showArchiveProspect();return;}
-    if(action==='open-quick-entry'){location.hash=`#/report/${state.report.report.id}/quick-entry`;return;}
-    if(action==='open-section'){location.hash=`#/report/${state.report.report.id}/${target.dataset.id}`;return;}
+    if(action==='open-quick-entry'){navigateReportScreen('quick-entry');return;}
+    if(action==='open-section'){navigateReportScreen(target.dataset.id);return;}
+    if(action==='open-report-preview'){navigateReportScreen('report-preview');return;}
     if(action==='add-section'){showAddSection();return;}
     if(action==='remove-section'){showRemoveSection();return;}
     if(action==='new-finding'){showDetailedFinding();return;}
-    if(action==='focus-photo'||action==='go-quick-entry'){location.hash=`#/report/${state.report.report.id}/quick-entry`;return;}
+    if(action==='focus-photo'||action==='go-quick-entry'){navigateReportScreen('quick-entry');return;}
     if(action==='quick-take-photo'){const area=document.getElementById('quick-entry-area')?.value||'';if(!area)throw new Error('Select an Area of operation before taking a photo.');document.getElementById('quick-entry-camera')?.click();return;}
     if(action==='quick-choose-file'){const area=document.getElementById('quick-entry-area')?.value||'';if(!area)throw new Error('Select an Area of operation before choosing a file.');document.getElementById('quick-entry-file')?.click();return;}
     if(action==='map-capability'){showMapCapability();return;}
     if(action==='new-benefit'){showBenefit();return;}
     if(action==='merge-reports'){showMergeReports();return;}
     if(action==='delete-report'){showDeleteReport();return;}
-    const reportId=state.report?.report?.id;const section=selectedSection();
+    const reportId=state.report?.report?.id;const section=selectedSection();const screenId=currentReportScreen();
     if(action==='review-mapping'){await api(`/api/reports/${reportId}/capability-mappings/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});renderReport(reportId,section.id);return;}
     if(action==='review-benefit'){await api(`/api/reports/${reportId}/benefits/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});renderReport(reportId,section.id);return;}
     if(action==='review-evidence'){await api(`/api/reports/${reportId}/evidence/${target.dataset.id}/review`,{method:'POST',body:{include_in_report:target.dataset.include==='true'}});toast('Evidence disposition updated.','success');renderReport(reportId,section.id);return;}
     if(action==='resolve-comment'){await api(`/api/reports/${reportId}/comments/${target.dataset.id}/resolve`,{method:'POST'});renderReport(reportId,section.id);return;}
     if(action==='request-ai'){const result=await api(`/api/reports/${reportId}/ai`,{method:'POST',body:{section_id:section.id,purpose:'NARRATIVE'}});toast(result.message||'AI draft queued for generation and human review.','success');renderReport(reportId,section.id);return;}
     if(action==='review-ai'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});renderReport(reportId,section.id);return;}
-    if(action==='validate-draft'||action==='validate-final'){const final=action==='validate-final';state.validation=await api(`/api/reports/${reportId}/validate`,{method:'POST',body:{final_requested:final}});renderReport(reportId,section.id);return;}
-    if(action==='publish'){const result=await api(`/api/reports/${reportId}/publications`,{method:'POST',body:{publication_type:target.dataset.type,is_final:target.dataset.final==='true'}},false);toast('Document generation queued. Refresh status in a few moments.','success');renderReport(reportId,section.id);return;}
-    if(action==='refresh-report'){renderReport(reportId,section.id);return;}
+    if(action==='validate-draft'||action==='validate-final'){const final=action==='validate-final';state.validation=await api(`/api/reports/${reportId}/validate`,{method:'POST',body:{final_requested:final}});renderReport(reportId,screenId);return;}
+    if(action==='publish'){await api(`/api/reports/${reportId}/publications`,{method:'POST',body:{publication_type:target.dataset.type,is_final:target.dataset.final==='true'}},false);toast('Document generation queued. Refresh status in a few moments.','success');renderReport(reportId,screenId);return;}
+    if(action==='refresh-report'){renderReport(reportId,screenId);return;}
     if(action==='section-status'){return;}
     if(action==='admin-tab'){renderAdminTab(target.dataset.tab);return;}
     if(action==='new-user'){showNewUser();return;}
@@ -756,10 +852,10 @@ async function handleChange(event) {
   const target=event.target;
   try {
     if(target.matches('[data-action="onboarding-toggle"]')){setOnboardingSectionEnabled(target);return;}
-    if(target.matches('[data-action="mobile-section"]')){location.hash=`#/report/${state.report.report.id}/${target.value}`;return;}
+    if(target.matches('[data-action="mobile-section"]')){navigateReportScreen(target.value);return;}
     if(target.matches('[data-action="quick-entry-area"]')){setQuickEntryArea(state.report.report.id,target.value);return;}
     if(target.id==='quick-entry-camera'||target.id==='quick-entry-file'){await uploadQuickEntryFiles(target);return;}
-    if(target.matches('[data-action="section-status"]')){const section=selectedSection();await api(`/api/reports/${state.report.report.id}/sections/${section.id}`,{method:'PATCH',body:{state:target.value,expected_version:section.version}});toast('Section status updated.','success');renderReport(state.report.report.id,section.id);return;}
+    if(target.matches('[data-action="section-status"]')){const section=selectedSection();rememberReportNavScroll();await api(`/api/reports/${state.report.report.id}/sections/${section.id}`,{method:'PATCH',body:{state:target.value,expected_version:section.version}});toast('Section status updated.','success');renderReport(state.report.report.id,section.id);return;}
     if(target.matches('[data-action="section-assignee"]')){const section=selectedSection();await api(`/api/reports/${state.report.report.id}/sections/${section.id}`,{method:'PATCH',body:{assigned_to_user_id:target.value||null,expected_version:section.version}});toast('Section assignment updated.','success');renderReport(state.report.report.id,section.id);return;}
   }catch(error){toast(error.message,'error');}
 }

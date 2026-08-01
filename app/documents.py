@@ -313,11 +313,13 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         ]
         return any(db.scalar(stmt) is not None for stmt in checks)
 
-    if publication_type == "FOLLOW_UP_QUESTIONNAIRE" or is_final:
+    if publication_type == "FOLLOW_UP_QUESTIONNAIRE":
         sections = all_sections
     elif publication_type == "DEMO_BRIEF":
         sections = [s for s in all_sections if has_publishable_content(s) or s.stable_key in {"executive-summary", "vision-pain-points", "solution-viability", "expected-benefits", "next-steps"}]
     else:
+        # Draft and final discovery documents include only sections that contain
+        # reportable content. Empty optional sections never create blank output.
         sections = [s for s in all_sections if has_publishable_content(s)]
 
     _add_toc(doc, sections)
@@ -337,7 +339,7 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
 
         if section.narrative.strip():
             _add_text(doc, section.narrative)
-        responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.section_id == section.id).order_by(PromptDefinition.display_order)).all()
+        responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.section_id == section.id, PromptDefinition.active.is_(True)).order_by(PromptDefinition.display_order)).all()
         if responses:
             doc.add_heading("Discovery Responses", level=2)
             for response, prompt in responses:

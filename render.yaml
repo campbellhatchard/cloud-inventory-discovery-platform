@@ -26,7 +26,7 @@ projects:
               - key: APP_COMPONENT
                 value: web
               - key: APP_VERSION
-                value: "0.4.1"
+                value: "0.5.0"
               - key: APP_BASE_URL
                 fromService:
                   type: web
@@ -90,7 +90,7 @@ projects:
               - key: APP_COMPONENT
                 value: worker
               - key: APP_VERSION
-                value: "0.4.1"
+                value: "0.5.0"
               - key: DATABASE_URL
                 fromDatabase:
                   name: cloud-inventory-discovery-staging-db

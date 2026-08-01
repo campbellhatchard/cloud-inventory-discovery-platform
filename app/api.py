@@ -299,7 +299,7 @@ def list_prospects(user: User = Depends(enforce_password_changed), db: Session =
             return []
         stmt = stmt.where(Prospect.id.in_(ids))
     prospects = list(db.scalars(stmt).all())
-    return [{"id": p.id, "name": p.name, "industry": p.industry, "opportunity": p.opportunity, "status": p.status, "retention_due_at": _iso(p.retention_due_at), "archive_prompted_at": _iso(p.archive_prompted_at), "last_exported_at": _iso(p.last_exported_at), "legal_hold": p.legal_hold, "updated_at": _iso(p.updated_at)} for p in prospects]
+    return [{"id": p.id, "name": p.name, "industry": p.industry, "opportunity": p.opportunity, "status": p.status, "retention_due_at": _iso(p.retention_due_at), "archive_prompted_at": _iso(p.archive_prompted_at), "last_exported_at": _iso(p.last_exported_at), "legal_hold": p.legal_hold, "logo_url": f"/api/prospects/{p.id}/logo" if p.logo_storage_key else None, "updated_at": _iso(p.updated_at)} for p in prospects]
 
 
 @router.post("/prospects", dependencies=[Depends(require_csrf)])
@@ -382,13 +382,82 @@ def get_prospect(prospect_id: str, user: User = Depends(enforce_password_changed
     reports = list(db.scalars(select(Report).where(Report.prospect_id == prospect_id, Report.state != "DELETED").order_by(Report.updated_at.desc())).all())
     members = db.execute(select(ProspectMembership, User).join(User, ProspectMembership.user_id == User.id).where(ProspectMembership.prospect_id == prospect_id)).all()
     return {
-        "prospect": {"id": prospect.id, "name": prospect.name, "industry": prospect.industry, "opportunity": prospect.opportunity, "status": prospect.status, "retention_due_at": _iso(prospect.retention_due_at), "archive_prompted_at": _iso(prospect.archive_prompted_at), "last_exported_at": _iso(prospect.last_exported_at), "legal_hold": prospect.legal_hold},
+        "prospect": {"id": prospect.id, "name": prospect.name, "industry": prospect.industry, "opportunity": prospect.opportunity, "status": prospect.status, "retention_due_at": _iso(prospect.retention_due_at), "archive_prompted_at": _iso(prospect.archive_prompted_at), "last_exported_at": _iso(prospect.last_exported_at), "legal_hold": prospect.legal_hold, "logo_url": f"/api/prospects/{prospect.id}/logo" if prospect.logo_storage_key else None},
         "access_scope": scope,
         "sites": [{"id": s.id, "name": s.name, "address": s.address, "timezone": s.timezone} for s in sites],
         "engagements": [{"id": e.id, "name": e.name, "site_id": e.site_id, "survey_date": _iso(e.survey_date), "status": e.status, "owner_id": e.owner_id} for e in engagements],
         "reports": [{"id": r.id, "title": r.title, "state": r.state, "report_kind": r.report_kind, "owner_id": r.owner_id, "revision": r.revision, "updated_at": _iso(r.updated_at), "merged_into_report_id": r.merged_into_report_id} for r in reports],
         "members": [{"user_id": u.id, "display_name": u.display_name or u.username, "email": u.email, "role_scope": m.role_scope} for m, u in members],
     }
+
+
+@router.get("/prospects/{prospect_id}/logo")
+def get_prospect_logo(
+    prospect_id: str,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    prospect = db.get(Prospect, prospect_id)
+    if not prospect:
+        raise HTTPException(404, "Prospect not found.")
+    require_prospect_access(db, user, prospect_id)
+    if not prospect.logo_storage_key:
+        raise HTTPException(404, "Prospect logo not found.")
+    try:
+        storage = ObjectStorage(settings)
+        data = storage.get_bytes(prospect.logo_storage_key)
+    except FileNotFoundError:
+        raise HTTPException(404, "Prospect logo not found.")
+    except Exception:
+        raise HTTPException(503, "Prospect logo storage is not configured for this environment.")
+    return StreamingResponse(io.BytesIO(data), media_type="image/png", headers={"Cache-Control": "private, no-store"})
+
+
+@router.post("/prospects/{prospect_id}/logo", dependencies=[Depends(require_csrf)])
+async def upload_prospect_logo(
+    prospect_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    prospect = db.get(Prospect, prospect_id)
+    if not prospect:
+        raise HTTPException(404, "Prospect not found.")
+    require_prospect_access(db, user, prospect_id, "OWNER")
+    data = await file.read(min(settings.max_upload_bytes, 10_485_760) + 1)
+    if len(data) > min(settings.max_upload_bytes, 10_485_760):
+        raise HTTPException(413, "Prospect logo exceeds the 10 MB limit.")
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail((1600, 800), Image.Resampling.LANCZOS)
+            if image.mode not in {"RGB", "RGBA"}:
+                image = image.convert("RGBA")
+            output = io.BytesIO()
+            image.save(output, format="PNG", optimize=True)
+            logo_bytes = output.getvalue()
+    except Exception:
+        raise HTTPException(400, "The uploaded prospect logo could not be decoded as an image.")
+
+    old_key = prospect.logo_storage_key
+    key = build_storage_key(prospect.id, "branding", uuid.uuid4().hex, "prospect-logo.png")
+    try:
+        storage = ObjectStorage(settings)
+        stored = storage.put_bytes(key, logo_bytes, "image/png")
+    except Exception:
+        raise HTTPException(503, "Prospect logo storage is not configured for this environment.")
+
+    prospect.logo_storage_key = stored.key
+    audit(db, actor=user, action="PROSPECT_LOGO_UPDATED", target_type="PROSPECT", target_id=prospect.id, prospect_id=prospect.id)
+    db.commit()
+    if old_key:
+        try:
+            storage.delete(old_key)
+        except Exception:
+            pass
+    return {"ok": True, "logo_url": f"/api/prospects/{prospect.id}/logo"}
 
 
 @router.get("/prospects/{prospect_id}/export")
@@ -600,7 +669,7 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     report = _get_report(db, report_id)
     scope = require_report_access(db, user, report)
     sections = list(db.scalars(select(ReportSection).where(ReportSection.report_id == report.id).order_by(ReportSection.display_order)).all())
-    responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.report_id == report.id)).all()
+    responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.report_id == report.id, PromptDefinition.active.is_(True))).all()
     response_map: dict[str, list[dict[str, Any]]] = {}
     for response, prompt in responses:
         response_map.setdefault(response.section_id, []).append({"id": response.id, "prompt_id": prompt.id, "question": prompt.question, "answer_type": prompt.answer_type, "narrative": response.narrative, "payload": response.payload, "version": response.version})
@@ -697,7 +766,7 @@ def add_section(report_id: str, payload: SectionCreate, user: User = Depends(enf
     require_report_access(db, user, report)
     max_order = db.scalar(select(func.max(ReportSection.display_order)).where(ReportSection.report_id == report.id)) or 0
     stable = f"custom-{uuid.uuid4().hex[:12]}"
-    section = ReportSection(report_id=report.id, stable_key=stable, title=payload.title, process_module=payload.process_module, display_order=max_order + 10, required_on_final=payload.required_on_final, created_by=user.id, updated_by=user.id)
+    section = ReportSection(report_id=report.id, stable_key=stable, title=payload.title, process_module=payload.process_module, display_order=max_order + 10, required_on_final=False, created_by=user.id, updated_by=user.id)
     db.add(section)
     _increment_report(report)
     audit(db, actor=user, action="REPORT_SECTION_CREATED", target_type="REPORT_SECTION", target_id=section.id, prospect_id=report.prospect_id, metadata={"report_id": report.id})

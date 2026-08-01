@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.4.1
-**Status:** Prospect onboarding and brand asset enhancement build; awaiting Render staging deployment and user acceptance
+**Version:** 0.5.0
+**Status:** Report review and usability enhancement build; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -21,6 +21,10 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Guided prospect creation with optional site and engagement creation
 - Browser-defaulted IANA timezone selection for sites
 - Context-correct full-colour and negative Cloud Inventory logos
+- Prospect-specific logo upload and header display
+- Compiled Report review workspace with centralized validation and document generation
+- Optional discovery questions and sections; only populated sections require review before final publication
+- Stable left-navigation position while moving between report sections
 - Standard and custom report sections
 - Guided questions plus free-form narrative capture
 - Quick Entry field-capture screen with persistent operational routing, browser autosave, and offline-safe IndexedDB queue

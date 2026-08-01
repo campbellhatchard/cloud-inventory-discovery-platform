@@ -13,7 +13,6 @@ from .models import (
     Comment,
     EvidenceItem,
     Finding,
-    PromptDefinition,
     Report,
     ReportSection,
     Response,
@@ -40,28 +39,13 @@ def validate_report(db: Session, report: Report, final_requested: bool) -> list[
 
     for section in active_sections:
         response_count = db.scalar(select(func.count(Response.id)).where(Response.section_id == section.id)) or 0
-        has_content = bool(section.narrative.strip()) or response_count > 0
-        if section.required_on_final and not has_content:
-            add("REQUIRED_SECTION_EMPTY", "ERROR" if final_requested else "WARNING", f"Required section '{section.title}' has no captured content.", section_id=section.id)
-        elif not has_content:
-            add("SECTION_EMPTY", "WARNING", f"Section '{section.title}' has no captured content.", section_id=section.id)
-        if _PLACEHOLDER.search(section.narrative or ""):
+        finding_count = db.scalar(select(func.count(Finding.id)).where(Finding.section_id == section.id, Finding.status != "REJECTED")) or 0
+        evidence_count = db.scalar(select(func.count(EvidenceItem.id)).where(EvidenceItem.section_id == section.id)) or 0
+        has_content = bool(section.narrative.strip()) or response_count > 0 or finding_count > 0 or evidence_count > 0
+        if has_content and _PLACEHOLDER.search(section.narrative or ""):
             add("PLACEHOLDER_TEXT", "ERROR" if final_requested else "WARNING", f"Section '{section.title}' contains placeholder text.", section_id=section.id)
-        if final_requested and section.state not in {"APPROVED", "READY_FOR_REVIEW"}:
-            add("SECTION_NOT_REVIEWED", "ERROR", f"Section '{section.title}' has not reached review/approval state.", section_id=section.id)
-
-        # Prompt-level validation is intentionally quiet for untouched draft sections. It becomes
-        # mandatory for final generation, or once a contributor has started the section.
-        if final_requested or has_content:
-            required_prompts = list(db.scalars(select(PromptDefinition).where(
-                PromptDefinition.active.is_(True),
-                PromptDefinition.required_on_final.is_(True),
-                (PromptDefinition.process_module == section.process_module) if section.process_module else PromptDefinition.process_module.is_(None),
-            )).all())
-            answered = set(db.scalars(select(Response.prompt_id).where(Response.section_id == section.id)).all())
-            for prompt in required_prompts:
-                if prompt.id not in answered:
-                    add("REQUIRED_PROMPT_UNANSWERED", "ERROR" if final_requested else "WARNING", f"Required question is unanswered: {prompt.question}", section_id=section.id, target_id=prompt.id)
+        if final_requested and has_content and section.state not in {"APPROVED", "READY_FOR_REVIEW"}:
+            add("SECTION_NOT_REVIEWED", "ERROR", f"Section '{section.title}' contains content but has not reached review/approval state.", section_id=section.id)
 
     evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.report_id == report.id)).all())
     for item in evidence:

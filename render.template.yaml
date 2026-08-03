@@ -26,7 +26,7 @@ projects:
               - key: APP_COMPONENT
                 value: web
               - key: APP_VERSION
-                value: "0.5.2"
+                value: "0.6.0"
               - key: APP_BASE_URL
                 fromService:
                   type: web
@@ -54,14 +54,18 @@ projects:
                 sync: false
               - key: S3_SECRET_ACCESS_KEY
                 sync: false
+              - key: OPENAI_API_KEY
+                sync: false
+              - key: OPENAI_PROJECT_ID
+                sync: false
               - key: OPENAI_MODEL
                 value: gpt-5-mini
               - key: AI_ENABLED
-                value: "false"
+                sync: false
               - key: AI_CONFIDENTIAL_CONTENT_ENABLED
-                value: "false"
+                sync: false
               - key: OPENAI_DATA_CONTROL_MODE
-                value: standard-disabled-for-confidential
+                sync: false
               - key: LIBREOFFICE_PATH
                 value: /usr/bin/libreoffice
               - key: DEFAULT_RETENTION_DAYS
@@ -90,7 +94,7 @@ projects:
               - key: APP_COMPONENT
                 value: worker
               - key: APP_VERSION
-                value: "0.5.2"
+                value: "0.6.0"
               - key: DATABASE_URL
                 fromDatabase:
                   name: __DATABASE_NAME__
@@ -107,14 +111,18 @@ projects:
                 sync: false
               - key: S3_SECRET_ACCESS_KEY
                 sync: false
+              - key: OPENAI_API_KEY
+                sync: false
+              - key: OPENAI_PROJECT_ID
+                sync: false
               - key: OPENAI_MODEL
                 value: gpt-5-mini
               - key: AI_ENABLED
-                value: "false"
+                sync: false
               - key: AI_CONFIDENTIAL_CONTENT_ENABLED
-                value: "false"
+                sync: false
               - key: OPENAI_DATA_CONTROL_MODE
-                value: standard-disabled-for-confidential
+                sync: false
               - key: LIBREOFFICE_PATH
                 value: /usr/bin/libreoffice
               - key: MERGE_SOURCE_RECOVERY_DAYS

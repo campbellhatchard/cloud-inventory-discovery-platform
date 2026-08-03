@@ -6,7 +6,7 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.5.2
+**Version:** 0.6.0
 **Status:** Report output formatting and publication-history enhancement build; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 

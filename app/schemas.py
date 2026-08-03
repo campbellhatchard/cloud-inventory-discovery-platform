@@ -165,8 +165,18 @@ class MergeRequest(BaseModel):
 
 class AiRequest(BaseModel):
     section_id: str | None = None
-    purpose: Literal["NARRATIVE", "GAP_ANALYSIS", "CAPABILITY_RECOMMENDATION", "BENEFIT_DRAFT", "EXECUTIVE_SUMMARY", "ATTACHMENT_REVIEW"]
-    instructions: str | None = None
+    purpose: Literal[
+        "NARRATIVE",
+        "GAP_ANALYSIS",
+        "CAPABILITY_RECOMMENDATION",
+        "BENEFIT_DRAFT",
+        "EXECUTIVE_SUMMARY",
+        "ATTACHMENT_REVIEW",
+        "OBSERVATION_ENHANCEMENT",
+    ]
+    instructions: str | None = Field(default=None, max_length=4000)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=20)
+    parent_suggestion_id: str | None = None
 
 
 class BrandingUpdate(BaseModel):

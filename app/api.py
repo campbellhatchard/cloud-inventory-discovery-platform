@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .access import accessible_prospect_ids, require_prospect_access, require_report_access
-from .ai_service import evaluate_policy
+from .ai_service import build_observation_snapshot, evaluate_policy
 from .audit import audit
 from .auth import (
     authenticate,
@@ -68,6 +68,7 @@ from .models import (
     ReportSection,
     ReportTemplate,
     Response,
+    SectionContentVersion,
     SectionTemplate,
     Site,
     User,
@@ -148,6 +149,16 @@ def _get_section(db: Session, section_id: str) -> ReportSection:
 
 def _increment_report(report: Report) -> None:
     report.revision += 1
+
+
+def _next_content_version(db: Session, section_id: str, content_type: str = "CURRENT_OPERATIONS") -> int:
+    current = db.scalar(
+        select(func.max(SectionContentVersion.version)).where(
+            SectionContentVersion.section_id == section_id,
+            SectionContentVersion.content_type == content_type,
+        )
+    )
+    return int(current or 0) + 1
 
 
 def _object_storage_or_503(settings: Settings) -> ObjectStorage:
@@ -751,7 +762,7 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         "evidence": [{"id": e.id, "section_id": e.section_id, "evidence_type": e.evidence_type, "caption": e.caption, "placement": e.placement, "classification": e.classification, "status": e.status, "extraction_state": e.extraction_state, "has_extracted_text": bool(e.extracted_text), "ai_inclusion_recommendation": e.ai_inclusion_recommendation, "file": {"id": f.id, "file_name": f.file_name, "mime_type": f.mime_type, "size_bytes": f.size_bytes, "variant": f.variant} if f else None} for e, f in evidence if not f or f.variant == "ORIGINAL"],
         "capability_mappings": [{"id": m.id, "finding_id": m.finding_id, "capability_id": c.id, "capability_code": c.capability_code, "capability_name": c.name, "rationale": m.rationale, "prerequisites": m.prerequisites, "approval_state": m.approval_state} for m, c in capabilities],
         "benefits": [{"id": b.id, "finding_id": b.finding_id, "capability_mapping_id": b.capability_mapping_id, "statement": b.statement, "measure_type": b.measure_type, "formula": b.formula, "assumptions": b.assumptions, "approval_state": b.approval_state} for b in benefits],
-        "ai_suggestions": [{"id": s.id, "section_id": s.section_id, "purpose": s.purpose, "content": s.content, "confidence": s.confidence, "review_state": s.review_state, "created_at": _iso(s.created_at)} for s in suggestions],
+        "ai_suggestions": [{"id": s.id, "section_id": s.section_id, "purpose": s.purpose, "content": s.content, "source_refs": s.source_refs, "confidence": s.confidence, "review_state": s.review_state, "reviewed_at": _iso(s.reviewed_at), "created_at": _iso(s.created_at)} for s in suggestions],
         "publications": [
             {
                 "id": p.id,
@@ -770,6 +781,46 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         "members": [{"user_id": member.user_id, "role_scope": member.role_scope, "display_name": member_user.display_name, "username": member_user.username} for member, member_user in members],
         "comments": [{"id": comment.id, "section_id": comment.section_id, "author_id": comment.author_id, "author_name": comment_user.display_name or comment_user.username, "body": comment.body, "status": comment.status, "created_at": _iso(comment.created_at), "resolved_at": _iso(comment.resolved_at)} for comment, comment_user in comments],
     }
+
+
+@router.get("/reports/{report_id}/sections/{section_id}/content-versions")
+def list_section_content_versions(
+    report_id: str,
+    section_id: str,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    section = _get_section(db, section_id)
+    if section.report_id != report.id:
+        raise HTTPException(404, "Section not found.")
+    versions = list(
+        db.scalars(
+            select(SectionContentVersion)
+            .where(
+                SectionContentVersion.report_id == report.id,
+                SectionContentVersion.section_id == section.id,
+                SectionContentVersion.content_type == "CURRENT_OPERATIONS",
+            )
+            .order_by(SectionContentVersion.version.desc())
+        ).all()
+    )
+    return [
+        {
+            "id": item.id,
+            "version": item.version,
+            "content_type": item.content_type,
+            "text": item.text,
+            "source_type": item.source_type,
+            "source_refs": item.source_refs,
+            "ai_suggestion_id": item.ai_suggestion_id,
+            "is_current": item.is_current,
+            "created_by": item.created_by,
+            "created_at": _iso(item.created_at),
+        }
+        for item in versions
+    ]
 
 
 @router.post("/reports/{report_id}/members", dependencies=[Depends(require_csrf)])
@@ -1390,12 +1441,40 @@ def ai_status(user: User = Depends(enforce_password_changed), settings: Settings
 
 
 @router.post("/reports/{report_id}/ai", dependencies=[Depends(require_csrf)], status_code=status.HTTP_202_ACCEPTED)
-def request_ai(report_id: str, payload: AiRequest, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+def request_ai(
+    report_id: str,
+    payload: AiRequest,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
     report = _get_report(db, report_id)
     require_report_access(db, user, report)
     section = db.get(ReportSection, payload.section_id) if payload.section_id else None
     if section and section.report_id != report.id:
         raise HTTPException(400, "Section does not belong to report.")
+
+    context_snapshot = None
+    parent_suggestion = None
+    if payload.purpose == "OBSERVATION_ENHANCEMENT":
+        if not section:
+            raise HTTPException(400, "Observation enhancement requires a report section.")
+        if payload.parent_suggestion_id:
+            parent_suggestion = db.get(AiSuggestion, payload.parent_suggestion_id)
+            if not parent_suggestion or parent_suggestion.report_id != report.id or parent_suggestion.section_id != section.id:
+                raise HTTPException(400, "Parent AI suggestion does not belong to this section.")
+            if parent_suggestion.purpose != "OBSERVATION_ENHANCEMENT":
+                raise HTTPException(400, "Only an observation enhancement can be refined through this workflow.")
+            parent_snapshot = dict((parent_suggestion.content or {}).get("source_snapshot") or {})
+            inherited_evidence = list(parent_snapshot.get("selected_evidence_ids") or [])
+            selected_evidence = payload.evidence_ids or inherited_evidence
+        else:
+            selected_evidence = payload.evidence_ids
+        try:
+            context_snapshot = build_observation_snapshot(db, report, section, selected_evidence)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     decision = evaluate_policy(settings, contains_prospect_confidential_content=True)
     job = AiJob(
         report_id=report.id,
@@ -1404,19 +1483,44 @@ def request_ai(report_id: str, payload: AiRequest, user: User = Depends(enforce_
         instructions=payload.instructions,
         model=settings.openai_model,
         policy_decision=decision.as_dict(),
+        context_snapshot=context_snapshot,
+        parent_suggestion_id=parent_suggestion.id if parent_suggestion else None,
         status="BLOCKED" if not decision.allowed else "QUEUED",
         requested_by=user.id,
     )
     db.add(job)
     db.flush()
     if not decision.allowed:
-        audit(db, actor=user, action="AI_REQUEST_BLOCKED", target_type="AI_JOB", target_id=job.id, prospect_id=report.prospect_id, metadata=decision.as_dict())
+        audit(
+            db,
+            actor=user,
+            action="AI_REQUEST_BLOCKED",
+            target_type="AI_JOB",
+            target_id=job.id,
+            prospect_id=report.prospect_id,
+            metadata=decision.as_dict(),
+        )
         db.commit()
-        raise HTTPException(status_code=403, detail={"message": decision.reason, "ai_job_id": job.id, "policy": decision.as_dict()})
+        raise HTTPException(
+            status_code=403,
+            detail={"message": decision.reason, "ai_job_id": job.id, "policy": decision.as_dict()},
+        )
     enqueue(db, "ai.generate", {"ai_job_id": job.id}, max_attempts=3)
-    audit(db, actor=user, action="AI_REQUEST_QUEUED", target_type="AI_JOB", target_id=job.id, prospect_id=report.prospect_id, metadata={"purpose": payload.purpose})
+    audit(
+        db,
+        actor=user,
+        action="AI_REQUEST_QUEUED",
+        target_type="AI_JOB",
+        target_id=job.id,
+        prospect_id=report.prospect_id,
+        metadata={
+            "purpose": payload.purpose,
+            "selected_evidence_ids": payload.evidence_ids,
+            "parent_suggestion_id": payload.parent_suggestion_id,
+        },
+    )
     db.commit()
-    return {"ai_job_id": job.id, "status": job.status, "message": "AI draft queued for generation and human review."}
+    return {"ai_job_id": job.id, "status": job.status, "message": "AI enhancement queued for generation and human review."}
 
 
 @router.get("/ai-jobs/{ai_job_id}")
@@ -1435,6 +1539,7 @@ def get_ai_job(ai_job_id: str, user: User = Depends(enforce_password_changed), d
         "status": job.status,
         "model": job.model,
         "policy_decision": job.policy_decision,
+        "parent_suggestion_id": job.parent_suggestion_id,
         "token_usage": job.token_usage,
         "error": job.error,
         "created_at": _iso(job.created_at),
@@ -1451,12 +1556,25 @@ def get_ai_job(ai_job_id: str, user: User = Depends(enforce_password_changed), d
 
 
 @router.post("/reports/{report_id}/ai-suggestions/{suggestion_id}/review", dependencies=[Depends(require_csrf)])
-def review_ai(report_id: str, suggestion_id: str, payload: ReviewDecision, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
+def review_ai(
+    report_id: str,
+    suggestion_id: str,
+    payload: ReviewDecision,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
     report = _get_report(db, report_id)
-    require_report_access(db, user, report, "REVIEWER")
     suggestion = db.get(AiSuggestion, suggestion_id)
     if not suggestion or suggestion.report_id != report.id:
         raise HTTPException(404, "Suggestion not found.")
+    # Observation enhancement is equivalent to a collaborative narrative edit,
+    # so any report contributor may accept it. Other AI recommendations retain
+    # the reviewer requirement.
+    if suggestion.purpose == "OBSERVATION_ENHANCEMENT":
+        require_report_access(db, user, report)
+    else:
+        require_report_access(db, user, report, "REVIEWER")
+
     suggestion.review_state = payload.decision
     suggestion.reviewed_by = user.id
     suggestion.review_note = payload.note
@@ -1465,13 +1583,78 @@ def review_ai(report_id: str, suggestion_id: str, payload: ReviewDecision, user:
     content = dict(suggestion.content or {})
     if payload.decision == "APPROVED" and not content.get("_applied"):
         target_section = db.get(ReportSection, suggestion.section_id) if suggestion.section_id else None
-        suggested_text = str(content.get("suggested_text") or content.get("summary") or "").strip()
-        if suggested_text and target_section and suggestion.purpose in {"NARRATIVE", "EXECUTIVE_SUMMARY", "ATTACHMENT_REVIEW"}:
+        suggested_text = str(content.get("enhanced_text") or content.get("suggested_text") or content.get("summary") or "").strip()
+
+        if suggestion.purpose == "OBSERVATION_ENHANCEMENT":
+            if not target_section:
+                raise HTTPException(409, "The target section is no longer available.")
+            if content.get("verification_status") != "PASSED" or not content.get("accept_allowed", False):
+                raise HTTPException(409, "This AI enhancement contains unsupported claims and cannot be accepted. Refine or regenerate it first.")
+            source_version = content.get("source_section_version")
+            if source_version is not None and int(source_version) != target_section.version:
+                raise HTTPException(409, "The section changed after this AI enhancement was generated. Generate a new enhancement before accepting it.")
+            if not suggested_text:
+                raise HTTPException(409, "The AI enhancement does not contain usable text.")
+
+            for current in db.scalars(
+                select(SectionContentVersion).where(
+                    SectionContentVersion.section_id == target_section.id,
+                    SectionContentVersion.content_type == "CURRENT_OPERATIONS",
+                    SectionContentVersion.is_current.is_(True),
+                )
+            ).all():
+                current.is_current = False
+
+            original_text = str(content.get("original_text") or target_section.narrative or "")
+            existing_original = db.scalar(
+                select(SectionContentVersion).where(
+                    SectionContentVersion.section_id == target_section.id,
+                    SectionContentVersion.content_type == "CURRENT_OPERATIONS",
+                    SectionContentVersion.text == original_text,
+                ).order_by(SectionContentVersion.version.desc())
+            )
+            if not existing_original:
+                db.add(
+                    SectionContentVersion(
+                        report_id=report.id,
+                        section_id=target_section.id,
+                        content_type="CURRENT_OPERATIONS",
+                        version=_next_content_version(db, target_section.id),
+                        text=original_text,
+                        source_type="USER",
+                        source_refs=[],
+                        is_current=False,
+                        created_by=user.id,
+                    )
+                )
+                db.flush()
+
+            db.add(
+                SectionContentVersion(
+                    report_id=report.id,
+                    section_id=target_section.id,
+                    content_type="CURRENT_OPERATIONS",
+                    version=_next_content_version(db, target_section.id),
+                    text=suggested_text,
+                    source_type="AI_ACCEPTED",
+                    source_refs=content.get("source_refs") or [],
+                    ai_suggestion_id=suggestion.id,
+                    is_current=True,
+                    created_by=user.id,
+                )
+            )
+            target_section.narrative = suggested_text
+            target_section.version += 1
+            target_section.updated_by = user.id
+            applied["narrative"] = True
+
+        elif suggested_text and target_section and suggestion.purpose in {"NARRATIVE", "EXECUTIVE_SUMMARY", "ATTACHMENT_REVIEW"}:
             if suggested_text not in target_section.narrative:
                 target_section.narrative = f"{target_section.narrative.strip()}\n\n{suggested_text}".strip()
                 target_section.version += 1
                 target_section.updated_by = user.id
                 applied["narrative"] = True
+
         for recommendation in content.get("capability_recommendations") or []:
             if not isinstance(recommendation, dict):
                 continue
@@ -1481,15 +1664,26 @@ def review_ai(report_id: str, suggestion_id: str, payload: ReviewDecision, user:
             finding = db.get(Finding, finding_id) if finding_id else None
             if not capability or capability.status != "APPROVED" or not finding or finding.report_id != report.id:
                 continue
-            existing = db.scalar(select(CapabilityMapping).where(CapabilityMapping.finding_id == finding.id, CapabilityMapping.capability_id == capability.id))
+            existing = db.scalar(
+                select(CapabilityMapping).where(
+                    CapabilityMapping.finding_id == finding.id,
+                    CapabilityMapping.capability_id == capability.id,
+                )
+            )
             if existing:
                 continue
-            db.add(CapabilityMapping(
-                report_id=report.id, finding_id=finding.id, capability_id=capability.id,
-                rationale=str(recommendation.get("rationale") or recommendation.get("reason") or "AI-assisted recommendation approved by reviewer."),
-                prerequisites=str(recommendation.get("prerequisites") or "") or None,
-                approval_state="APPROVED", approved_by=user.id, created_by=user.id,
-            ))
+            db.add(
+                CapabilityMapping(
+                    report_id=report.id,
+                    finding_id=finding.id,
+                    capability_id=capability.id,
+                    rationale=str(recommendation.get("rationale") or recommendation.get("reason") or "AI-assisted recommendation approved by reviewer."),
+                    prerequisites=str(recommendation.get("prerequisites") or "") or None,
+                    approval_state="APPROVED",
+                    approved_by=user.id,
+                    created_by=user.id,
+                )
+            )
             applied["mappings"] = int(applied["mappings"]) + 1
         for benefit_item in content.get("benefit_statements") or []:
             benefit_payload = benefit_item if isinstance(benefit_item, dict) else {"statement": str(benefit_item)}
@@ -1503,21 +1697,46 @@ def review_ai(report_id: str, suggestion_id: str, payload: ReviewDecision, user:
             exists = db.scalar(select(Benefit.id).where(Benefit.report_id == report.id, Benefit.statement == statement))
             if exists:
                 continue
-            db.add(Benefit(
-                report_id=report.id, finding_id=finding.id if finding else None,
-                statement=statement,
-                measure_type=str(benefit_payload.get("measure_type") or "QUALITATIVE").upper(),
-                formula=benefit_payload.get("formula"), assumptions=benefit_payload.get("assumptions"),
-                approval_state="APPROVED", created_by=user.id,
-            ))
+            db.add(
+                Benefit(
+                    report_id=report.id,
+                    finding_id=finding.id if finding else None,
+                    statement=statement,
+                    measure_type=str(benefit_payload.get("measure_type") or "QUALITATIVE").upper(),
+                    formula=benefit_payload.get("formula"),
+                    assumptions=benefit_payload.get("assumptions"),
+                    approval_state="APPROVED",
+                    created_by=user.id,
+                )
+            )
             applied["benefits"] = int(applied["benefits"]) + 1
         content["_applied"] = True
         content["_applied_by"] = user.id
         content["_applied_at"] = _iso(utcnow())
         suggestion.content = content
         _increment_report(report)
-    db.add(Approval(report_id=report.id, section_id=suggestion.section_id, target_type="AI_SUGGESTION", target_id=suggestion.id, target_version=1, decision=payload.decision, decided_by=user.id, note=payload.note))
-    audit(db, actor=user, action="AI_SUGGESTION_REVIEWED", target_type="AI_SUGGESTION", target_id=suggestion.id, prospect_id=report.prospect_id, metadata={"decision": payload.decision, "applied": applied})
+
+    db.add(
+        Approval(
+            report_id=report.id,
+            section_id=suggestion.section_id,
+            target_type="AI_SUGGESTION",
+            target_id=suggestion.id,
+            target_version=1,
+            decision=payload.decision,
+            decided_by=user.id,
+            note=payload.note,
+        )
+    )
+    audit(
+        db,
+        actor=user,
+        action="AI_SUGGESTION_REVIEWED",
+        target_type="AI_SUGGESTION",
+        target_id=suggestion.id,
+        prospect_id=report.prospect_id,
+        metadata={"decision": payload.decision, "applied": applied, "purpose": suggestion.purpose},
+    )
     db.commit()
     return {"ok": True, "applied": applied}
 

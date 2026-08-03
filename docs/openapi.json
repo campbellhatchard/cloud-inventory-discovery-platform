@@ -3,9 +3,18 @@
     "schemas": {
       "AiRequest": {
         "properties": {
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Evidence Ids",
+            "type": "array"
+          },
           "instructions": {
             "anyOf": [
               {
+                "maxLength": 4000,
                 "type": "string"
               },
               {
@@ -14,6 +23,17 @@
             ],
             "title": "Instructions"
           },
+          "parent_suggestion_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Suggestion Id"
+          },
           "purpose": {
             "enum": [
               "NARRATIVE",
@@ -21,7 +41,8 @@
               "CAPABILITY_RECOMMENDATION",
               "BENEFIT_DRAFT",
               "EXECUTIVE_SUMMARY",
-              "ATTACHMENT_REVIEW"
+              "ATTACHMENT_REVIEW",
+              "OBSERVATION_ENHANCEMENT"
             ],
             "title": "Purpose",
             "type": "string"
@@ -1667,7 +1688,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.5.2"
+    "version": "0.6.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4180,6 +4201,52 @@
           }
         },
         "summary": "Update Section"
+      }
+    },
+    "/api/reports/{report_id}/sections/{section_id}/content-versions": {
+      "get": {
+        "operationId": "list_section_content_versions_api_reports__report_id__sections__section_id__content_versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Section Content Versions"
       }
     },
     "/api/reports/{report_id}/sections/{section_id}/responses": {

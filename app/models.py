@@ -218,6 +218,23 @@ class ReportSection(Base, TimestampMixin):
     assigned_to_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
 
 
+class SectionContentVersion(Base):
+    __tablename__ = "section_content_versions"
+    __table_args__ = (UniqueConstraint("section_id", "content_type", "version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
+    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
+    section_id: Mapped[str] = mapped_column(ForeignKey("report_sections.id", ondelete="CASCADE"), index=True)
+    content_type: Mapped[str] = mapped_column(String(50), default="CURRENT_OPERATIONS")
+    version: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text, default="")
+    source_type: Mapped[str] = mapped_column(String(30), default="USER")
+    source_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    ai_suggestion_id: Mapped[str | None] = mapped_column(ForeignKey("ai_suggestions.id", ondelete="SET NULL"))
+    is_current: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Response(Base, TimestampMixin):
     __tablename__ = "responses"
     __table_args__ = (UniqueConstraint("section_id", "prompt_id"), UniqueConstraint("report_id", "client_mutation_id"))
@@ -298,6 +315,18 @@ class FileObject(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class EvidenceAiObservation(Base, TimestampMixin):
+    __tablename__ = "evidence_ai_observations"
+    __table_args__ = (UniqueConstraint("evidence_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id", ondelete="CASCADE"), index=True)
+    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
+    section_id: Mapped[str | None] = mapped_column(ForeignKey("report_sections.id", ondelete="CASCADE"), index=True)
+    model: Mapped[str] = mapped_column(String(100))
+    source_file_sha256: Mapped[str | None] = mapped_column(String(64))
+    content: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+
 class Capability(Base, TimestampMixin):
     __tablename__ = "capabilities"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
@@ -368,6 +397,8 @@ class AiJob(Base):
     instructions: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(100))
     policy_decision: Mapped[dict[str, Any]] = mapped_column(JSON)
+    context_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    parent_suggestion_id: Mapped[str | None] = mapped_column(String(36), index=True)
     status: Mapped[str] = mapped_column(String(20), default="QUEUED")
     token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error: Mapped[str | None] = mapped_column(Text)

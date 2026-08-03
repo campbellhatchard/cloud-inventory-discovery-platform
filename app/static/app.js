@@ -19,6 +19,7 @@ const state = {
   reportNavScroll: 0,
   saveTimers: new Map(),
   route: null,
+  aiEnhancementPollToken: 0,
 };
 
 const esc = value => String(value ?? '')
@@ -252,7 +253,7 @@ function showModal(title, body, actions = '') {
   wrap.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h2>${esc(title)}</h2>${body}<div class="modal-actions">${actions || '<button class="btn btn-ghost" data-action="close-modal">Close</button>'}</div></section>`;
   document.body.appendChild(wrap);
 }
-function closeModal() { document.getElementById('modal-root')?.remove(); }
+function closeModal() { state.aiEnhancementPollToken += 1; if ('speechSynthesis' in window) window.speechSynthesis.cancel(); document.getElementById('modal-root')?.remove(); }
 
 function showPasswordModal() {
   showModal('Change your password', `
@@ -449,6 +450,128 @@ function quickEntryContent() {
     </section>`;
 }
 
+function sectionOriginalInputSummary(section) {
+  const report = state.report;
+  const parts = [];
+  if (section.narrative?.trim()) parts.push(`SECTION NARRATIVE\n${section.narrative.trim()}`);
+  const answered = (section.responses || []).filter(item => (item.narrative || '').trim() || item.payload);
+  if (answered.length) parts.push(`GUIDED DISCOVERY RESPONSES\n${answered.map(item => `${item.question}\n${item.narrative || JSON.stringify(item.payload || {})}`).join('\n\n')}`);
+  const findings = report.findings.filter(item => item.section_id === section.id && item.status !== 'REJECTED');
+  if (findings.length) parts.push(`FINDINGS\n${findings.map(item => `${item.finding_type.replaceAll('_',' ')}: ${item.statement}${item.impact ? `\nImpact noted: ${item.impact}` : ''}`).join('\n\n')}`);
+  const metrics = report.metrics.filter(item => item.section_id === section.id);
+  if (metrics.length) parts.push(`METRICS\n${metrics.map(item => `${item.name}: ${item.value_text ?? item.value_numeric ?? ''}${item.unit ? ` ${item.unit}` : ''}${item.period ? ` (${item.period})` : ''}`).join('\n')}`);
+  return parts.join('\n\n') || 'No written observations have been entered yet. You can still use selected photographs as evidence.';
+}
+
+function sectionAiPhotos(section) {
+  return state.report.evidence.filter(item => item.section_id === section.id && item.file?.mime_type?.startsWith('image/'));
+}
+
+function aiSourceRefLabel(ref, section) {
+  if (!ref) return '';
+  if (typeof ref === 'object') return ref.label || ref.ref || '';
+  if (ref === 'section:narrative') return 'Section narrative';
+  const [kind,id] = String(ref).split(':',2);
+  if (kind === 'response') return section.responses.find(item => item.id === id)?.question || ref;
+  if (kind === 'finding') return state.report.findings.find(item => item.id === id)?.statement || ref;
+  if (kind === 'metric') return state.report.metrics.find(item => item.id === id)?.name || ref;
+  if (kind === 'evidence') return state.report.evidence.find(item => item.id === id)?.caption || 'Section photograph';
+  return ref;
+}
+
+function renderAiEnhancementResult(job, section) {
+  const result = job?.suggestion?.content || {};
+  const enhancedText = result.enhanced_text || result.suggested_text || '';
+  const target = document.getElementById('ai-enhanced-output');
+  if (!target) return;
+  const passed = result.verification_status === 'PASSED' && result.accept_allowed !== false;
+  const sources = result.source_refs || [];
+  const gaps = result.gaps || [];
+  const unsupported = result.unsupported_claims || [];
+  target.innerHTML = `
+    <div class="ai-result-head"><span class="badge ${passed ? 'badge-success' : 'badge-danger'}">${esc(result.verification_status || 'REVIEW REQUIRED')}</span><button class="btn btn-ghost btn-small" type="button" data-action="speak-ai-text" ${enhancedText ? '' : 'disabled'}>🔊 Read aloud</button></div>
+    <textarea id="ai-enhanced-text" class="ai-comparison-text" readonly>${esc(enhancedText)}</textarea>
+    ${sources.length ? `<div class="ai-trace"><strong>Sources used</strong><ul>${sources.map(item => `<li>${esc(aiSourceRefLabel(item, section))}</li>`).join('')}</ul></div>` : ''}
+    ${gaps.length ? `<div class="ai-trace"><strong>Information gaps retained</strong><ul>${gaps.map(item => `<li>${esc(typeof item === 'string' ? item : JSON.stringify(item))}</li>`).join('')}</ul></div>` : ''}
+    ${unsupported.length ? `<div class="validation-item ERROR"><strong>Unsupported claims detected.</strong><ul>${unsupported.map(item => `<li>${esc(item.text || JSON.stringify(item))}${item.reason ? ` — ${esc(item.reason)}` : ''}</li>`).join('')}</ul><p>Acceptance is disabled until the text is regenerated or refined without unsupported claims.</p></div>` : ''}
+    <div class="field ai-refinement-field"><label for="ai-refinement-instruction">Refine the AI wording</label><textarea id="ai-refinement-instruction" placeholder="For example: Make this more concise, use a neutral customer-facing tone, or emphasize the manual handoffs without adding new facts."></textarea></div>
+    <div class="card-actions"><button class="btn btn-secondary" type="button" data-action="refine-ai-enhancement" data-suggestion-id="${esc(job.suggestion.id)}">Refine</button><button class="btn btn-primary" type="button" data-action="accept-ai-enhancement" data-suggestion-id="${esc(job.suggestion.id)}" ${passed ? '' : 'disabled'}>Accept enhanced text</button></div>`;
+  target.dataset.enhancedText = enhancedText;
+}
+
+async function pollAiEnhancement(jobId, section, token) {
+  const output = document.getElementById('ai-enhanced-output');
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    if (token !== state.aiEnhancementPollToken || !document.getElementById('ai-enhancement-modal')) return;
+    const job = await api(`/api/ai-jobs/${jobId}`, {}, false);
+    if (job.status === 'COMPLETED' && job.suggestion) {
+      renderAiEnhancementResult(job, section);
+      return;
+    }
+    if (['FAILED','BLOCKED'].includes(job.status)) {
+      if (output) output.innerHTML = `<div class="validation-item ERROR"><strong>AI enhancement failed.</strong><p>${esc(job.error || job.policy_decision?.reason || 'The AI job could not be completed.')}</p></div>`;
+      return;
+    }
+    if (output) output.innerHTML = '<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Analyzing entered observations and selected photographs…</p></div>';
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+  if (output) output.innerHTML = '<div class="validation-item ERROR">AI enhancement timed out. You can close this window and try again.</div>';
+}
+
+async function requestAiEnhancement(section, parentSuggestionId = null) {
+  const selectedEvidence = Array.from(document.querySelectorAll('#ai-photo-picker input[type="checkbox"]:checked')).map(item => item.value);
+  const instruction = document.getElementById('ai-refinement-instruction')?.value?.trim() || null;
+  const output = document.getElementById('ai-enhanced-output');
+  if (output) output.innerHTML = '<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Analyzing entered observations and selected photographs…</p></div>';
+  const result = await api(`/api/reports/${state.report.report.id}/ai`, {
+    method:'POST',
+    body:{
+      section_id:section.id,
+      purpose:'OBSERVATION_ENHANCEMENT',
+      instructions:instruction,
+      evidence_ids:selectedEvidence,
+      parent_suggestion_id:parentSuggestionId,
+    },
+  }, false);
+  const token = ++state.aiEnhancementPollToken;
+  await pollAiEnhancement(result.ai_job_id, section, token);
+}
+
+async function showAiEnhancement(section) {
+  if (!navigator.onLine) throw new Error('AI enhancement requires an online connection. Your captured observations remain available offline.');
+  if (!state.aiStatus?.policy?.allowed) throw new Error(state.aiStatus?.policy?.reason || 'AI enhancement is not configured for this environment.');
+  const photos = sectionAiPhotos(section);
+  closeModal();
+  const wrap = document.createElement('div');
+  wrap.id = 'modal-root';
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<section id="ai-enhancement-modal" class="modal ai-enhancement-modal" role="dialog" aria-modal="true" aria-label="AI enhance ${esc(section.title)}">
+    <div class="section-head"><div><div class="card-meta"><span class="badge badge-cyan">AI OBSERVATION ENHANCEMENT</span><span>${esc(section.title)}</span></div><h2>Compare and refine current-operations wording</h2><p class="help">AI is restricted to the entered observations and selected photographs. Original input is retained and the accepted result remains subject to human review.</p></div><button class="btn btn-ghost btn-small" data-action="close-modal">Close</button></div>
+    <div id="ai-photo-picker" class="ai-photo-picker"><strong>Photographs available to AI</strong>${photos.length ? `<div class="ai-photo-grid">${photos.map(item => `<label class="ai-photo-option"><input type="checkbox" value="${item.id}" checked><span>${item.file ? `<img src="/api/files/${item.file.id}?inline=true" alt="${esc(item.caption || item.file.file_name)}">` : ''}<small>${esc(item.caption || item.file?.file_name || 'Photograph')}</small></span></label>`).join('')}</div>` : '<p class="help">No photographs are attached to this section. The enhancement will use written observations only.</p>'}</div>
+    <div class="ai-comparison-grid">
+      <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>Original entered content</h3><span class="badge">Retained</span></div><textarea class="ai-comparison-text" readonly>${esc(sectionOriginalInputSummary(section))}</textarea></section>
+      <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>AI-enhanced wording</h3><span class="help">Human approval required</span></div><div id="ai-enhanced-output"><div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Preparing enhancement…</p></div></div></section>
+    </div>
+  </section>`;
+  document.body.appendChild(wrap);
+  await requestAiEnhancement(section);
+}
+
+async function showSectionContentHistory(section) {
+  const versions = await api(`/api/reports/${state.report.report.id}/sections/${section.id}/content-versions`);
+  showModal('Current Operations Version History', versions.length ? `<div class="version-history">${versions.map(item => `<article class="finding"><div class="section-head"><div><strong>Version ${item.version}</strong><div class="card-meta"><span>${esc(item.source_type.replaceAll('_',' '))}</span><span>${esc(fmtDateTime(item.created_at))}</span></div></div>${item.is_current ? '<span class="badge badge-success">CURRENT</span>' : ''}</div><p class="version-text">${esc(item.text || '(blank original narrative)').replaceAll('\n','<br>')}</p></article>`).join('')}</div>` : '<p>No accepted AI enhancement history exists for this section yet.</p>', '');
+}
+
+function speakAiText() {
+  const text = document.getElementById('ai-enhanced-output')?.dataset.enhancedText || document.getElementById('ai-enhanced-text')?.value || '';
+  if (!text) return;
+  if (!('speechSynthesis' in window)) { toast('Text-to-speech is not supported by this browser.','error'); return; }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1;
+  window.speechSynthesis.speak(utterance);
+}
+
 function reportSectionContent(section) {
   const report = state.report;
   const module = section.process_module || 'GENERAL';
@@ -459,9 +582,9 @@ function reportSectionContent(section) {
   return `
     <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions(section.id)}</select></div>
     <section class="card">
-      <div class="section-head"><div><div class="card-meta">${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar">${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
+      <div class="section-head"><div><div class="card-meta">${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="ai-enhance-observations" ${state.aiStatus?.policy?.allowed?'':'disabled'} title="${esc(state.aiStatus?.policy?.reason || 'AI status unavailable')}">AI Enhance</button><button class="btn btn-ghost btn-small" data-action="section-version-history">Version history</button>${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
       <p class="help">This section is open for collaborative entry by anyone associated with the report. No assignment or section status is required.</p>
-      <div class="field"><label for="section-narrative">Section narrative</label><textarea id="section-narrative" class="editor" data-section-id="${section.id}" placeholder="Write or refine the customer-facing narrative. Autosaves after you stop typing.">${esc(section.narrative)}</textarea><div id="narrative-save" class="save-state"></div></div>
+      <div class="field"><label for="section-narrative">Current operations narrative</label><textarea id="section-narrative" class="editor" data-section-id="${section.id}" placeholder="Write or refine the customer-facing narrative. Autosaves after you stop typing.">${esc(section.narrative)}</textarea><div id="narrative-save" class="save-state"></div></div>
     </section>
     <section class="card">
       <div class="section-head"><div><h2>Guided discovery questions</h2><p class="help">Structured answers preserve evidence and can later be converted into approved narrative.</p></div></div>
@@ -483,7 +606,7 @@ function reportInspector(section) {
     <aside class="report-inspector">
       <section class="inspector-card"><h3>Cloud Inventory functionality</h3>${findings.length?`<button class="btn btn-ghost btn-small btn-wide" data-action="map-capability">Map approved capability</button>`:'<p class="help">Capture a finding before mapping functionality.</p>'}${mappings.map(m=>`<div class="finding"><strong>${esc(m.capability_name)}</strong><p>${esc(m.rationale)}</p><span class="badge ${m.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(m.approval_state)}</span>${canR&&m.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
       <section class="inspector-card"><h3>Benefits and baselines</h3><button class="btn btn-ghost btn-small btn-wide" data-action="new-benefit">Add benefit statement</button>${benefits.map(b=>`<div class="finding"><p>${esc(b.statement)}</p><div class="card-meta"><span>${esc(b.measure_type)}</span><span class="badge ${b.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(b.approval_state)}</span></div>${canR&&b.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
-      <section class="inspector-card"><h3>AI assistance</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p><button class="btn btn-ghost btn-small btn-wide" data-action="request-ai" ${state.aiStatus?.policy?.allowed?'':'disabled'}>Draft from evidence</button>${suggestions.map(s=>`<details class="accordion"><summary>${esc(s.purpose)} - ${esc(s.review_state)}</summary><div class="accordion-body"><p>${esc(s.content.suggested_text || s.content.summary || JSON.stringify(s.content))}</p>${canR&&s.review_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-ai" data-id="${s.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-ai" data-id="${s.id}" data-decision="REJECTED">Reject</button></div>`:''}</div></details>`).join('')}</section>
+      <section class="inspector-card"><h3>AI enhancement</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p><p class="help">Use <strong>AI Enhance</strong> in the section header to compare the original observations with a source-grounded customer-facing draft.</p>${suggestions.filter(s=>s.purpose==='OBSERVATION_ENHANCEMENT').slice(0,3).map(s=>`<div class="finding"><div class="card-meta"><span>${esc(fmtDateTime(s.created_at))}</span><span class="badge ${s.review_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(s.review_state)}</span></div><p>${esc((s.content.enhanced_text || '').slice(0,220))}${(s.content.enhanced_text || '').length>220?'…':''}</p></div>`).join('')}</section>
       <section class="inspector-card"><h3>Collaboration comments</h3><form id="comment-form"><input type="hidden" name="section_id" value="${section.id}"><div class="field"><label class="sr-only">Comment</label><textarea name="body" required placeholder="Add a review note, question, or follow-up request."></textarea></div><button class="btn btn-ghost btn-small btn-wide" type="submit">Add comment</button></form>${comments.map(c=>`<div class="finding"><div class="card-meta"><strong>${esc(c.author_name)}</strong><span>${fmtDate(c.created_at)}</span></div><p>${esc(c.body)}</p><span class="badge ${c.status==='RESOLVED'?'badge-success':'badge-warning'}">${esc(c.status)}</span>${canR&&c.status==='OPEN'?`<button class="btn btn-ghost btn-small" data-action="resolve-comment" data-id="${c.id}">Resolve</button>`:''}</div>`).join('') || '<p class="help">No comments for this section.</p>'}</section>
     </aside>`;
 }
@@ -856,6 +979,11 @@ async function handleClick(event) {
     if(action==='review-benefit'){await api(`/api/reports/${reportId}/benefits/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});renderReport(reportId,section.id);return;}
     if(action==='review-evidence'){await api(`/api/reports/${reportId}/evidence/${target.dataset.id}/review`,{method:'POST',body:{include_in_report:target.dataset.include==='true'}});toast('Evidence disposition updated.','success');renderReport(reportId,section.id);return;}
     if(action==='resolve-comment'){await api(`/api/reports/${reportId}/comments/${target.dataset.id}/resolve`,{method:'POST'});renderReport(reportId,section.id);return;}
+    if(action==='ai-enhance-observations'){await showAiEnhancement(section);return;}
+    if(action==='section-version-history'){await showSectionContentHistory(section);return;}
+    if(action==='speak-ai-text'){speakAiText();return;}
+    if(action==='refine-ai-enhancement'){await requestAiEnhancement(section,target.dataset.suggestionId);return;}
+    if(action==='accept-ai-enhancement'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted from AI observation enhancement comparison.'}},false);toast('AI-enhanced current-operations wording accepted. Original input has been retained in version history.','success');closeModal();await renderReport(reportId,section.id);return;}
     if(action==='request-ai'){const result=await api(`/api/reports/${reportId}/ai`,{method:'POST',body:{section_id:section.id,purpose:'NARRATIVE'}});toast(result.message||'AI draft queued for generation and human review.','success');renderReport(reportId,section.id);return;}
     if(action==='review-ai'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});renderReport(reportId,section.id);return;}
     if(action==='validate-draft'||action==='validate-final'){const final=action==='validate-final';state.validation=await api(`/api/reports/${reportId}/validate`,{method:'POST',body:{final_requested:final}});renderReport(reportId,screenId);return;}

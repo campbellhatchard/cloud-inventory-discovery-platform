@@ -588,10 +588,10 @@ function reportSectionContent(section) {
     </section>
     <section class="card">
       <div class="section-head"><div><h2>Guided discovery questions</h2><p class="help">Structured answers preserve evidence and can later be converted into approved narrative.</p></div></div>
-      <div class="prompt-list">${prompts.map(p => { const r=answered.get(p.id); return `<article class="prompt-card"><div class="prompt-question"><span>${esc(p.question)}</span></div>${p.answer_type==='PHOTO'?`<button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button>`:`<textarea class="prompt-answer" data-prompt-id="${p.id}" data-response-version="${r?.version || ''}" placeholder="Capture the answer, facts, assumptions, and examples.">${esc(r?.narrative || '')}</textarea><div class="save-state" data-save-for="${p.id}"></div>`}</article>`; }).join('')}</div>
+      <div class="prompt-list">${prompts.map(p => { const r=answered.get(p.id); return `<article class="prompt-card"><div class="prompt-question"><span>${esc(p.question)}</span></div>${p.answer_type==='PHOTO'?`<button class="btn btn-ghost btn-small" data-action="section-upload-photo">Add photo to this section</button>`:`<textarea class="prompt-answer" data-prompt-id="${p.id}" data-response-version="${r?.version || ''}" placeholder="Capture the answer, facts, assumptions, and examples.">${esc(r?.narrative || '')}</textarea><div class="save-state" data-save-for="${p.id}"></div>`}</article>`; }).join('')}</div>
     </section>
     <section class="card" id="findings"><div class="section-head"><div><h2>Findings</h2><p class="help">Facts and interpretations should remain traceable to the section evidence.</p></div><button class="btn btn-ghost btn-small" data-action="new-finding">Add detailed finding</button></div>${findings.map(f => `<article class="finding"><div class="card-meta"><span class="badge">${esc(f.finding_type.replaceAll('_',' '))}</span><span>Confidence: ${esc(f.confidence)}</span></div><p>${esc(f.statement)}</p>${f.impact?`<p class="impact"><strong>Impact:</strong> ${esc(f.impact)}</p>`:''}</article>`).join('') || '<p class="help">No findings have been captured for this section.</p>'}</section>
-    <section class="card" id="photos"><div class="section-head"><div><h2>Site photographs and attachments</h2><p class="help">Photographs and attachments routed from Quick Entry appear here for review and publication.</p></div><button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button></div><div class="evidence-grid">${evidence.map(e => `<article class="evidence-card"><div class="evidence-thumb">${e.file?.mime_type?.startsWith('image/')?`<img src="/api/files/${e.file.id}?inline=true" alt="${esc(e.caption || e.file.file_name)}" loading="lazy">`:'Attachment'}</div><div class="evidence-body"><strong>${esc(e.caption || e.file?.file_name || 'Evidence')}</strong><div class="card-meta"><span>${esc(e.placement)}</span><span>${e.file?bytes(e.file.size_bytes):''}</span><span class="badge">${esc(e.extraction_state || 'NOT APPLICABLE')}</span></div>${e.file?`<a href="/api/files/${e.file.id}" target="_blank">Open file</a>`:''}${canReview(report.access_scope)?`<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="true">Include</button><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="false">Supporting only</button></div>`:''}</div></article>`).join('')}</div></section>`;
+    <section class="card" id="photos"><div class="section-head"><div><h2>Site photographs and attachments</h2><p class="help">Upload photographs directly to this operational section. Evidence routed from Quick Entry also appears here for review, AI enhancement, and publication.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="section-upload-photo">Add photographs</button><button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button></div></div><div class="evidence-grid">${evidence.map(e => `<article class="evidence-card"><div class="evidence-thumb">${e.file?.mime_type?.startsWith('image/')?`<img src="/api/files/${e.file.id}?inline=true" alt="${esc(e.caption || e.file.file_name)}" loading="lazy">`:'Attachment'}</div><div class="evidence-body"><strong>${esc(e.caption || e.file?.file_name || 'Evidence')}</strong><div class="card-meta"><span>${esc(e.placement)}</span><span>${e.file?bytes(e.file.size_bytes):''}</span><span class="badge">${esc(e.extraction_state || 'NOT APPLICABLE')}</span></div>${e.file?`<a href="/api/files/${e.file.id}" target="_blank">Open file</a>`:''}${canReview(report.access_scope)?`<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="true">Include</button><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="false">Supporting only</button></div>`:''}</div></article>`).join('') || '<p class="help">No site photographs have been added to this section yet.</p>'}</div></section>`;
 }
 
 function reportInspector(section) {
@@ -807,6 +807,19 @@ function renderAdminTab(tab) {
   if(tab==='branding') { const b=data.branding; panel.innerHTML=`<div class="card"><h2>Default Denver-derived branding</h2><form id="branding-form"><div class="grid grid-3"><div class="field"><label>Primary color</label><input name="primary_color" type="color" value="${esc(b.primary_color)}"></div><div class="field"><label>Secondary color</label><input name="secondary_color" type="color" value="${esc(b.secondary_color)}"></div><div class="field"><label>Accent color</label><input name="accent_color" type="color" value="${esc(b.accent_color)}"></div></div><div class="grid grid-2"><div class="field"><label>Heading font</label><input name="heading_font" value="${esc(b.heading_font)}"></div><div class="field"><label>Body font</label><input name="body_font" value="${esc(b.body_font)}"></div></div><div class="field"><label>Confidentiality statement</label><textarea name="confidentiality_text">${esc(b.confidentiality_text)}</textarea></div><div class="grid grid-2"><div class="field"><label>Draft watermark</label><input name="draft_watermark" value="${esc(b.draft_watermark)}"></div><div class="field"><label>Footer</label><input name="footer_text" value="${esc(b.footer_text)}"></div></div><input type="hidden" name="brand_id" value="${b.id}"><button class="btn btn-primary" type="submit">Save branding</button></form></div><div class="card"><h2>Report logo</h2><p class="help">${b.has_custom_logo?'A custom logo is active. Uploading a new image replaces it.':'The standard Cloud Inventory logo is active.'}</p><form id="branding-logo-form"><input type="hidden" name="brand_id" value="${b.id}"><div class="field"><label>Logo image</label><input name="file" type="file" accept="image/png,image/jpeg,image/webp" required></div><button class="btn btn-primary" type="submit">Upload report logo</button></form></div>`; }
   if(tab==='audit') panel.innerHTML=`<div class="table-wrap"><table><thead><tr><th>When</th><th>Action</th><th>Target</th><th>Actor</th><th>Metadata</th></tr></thead><tbody>${data.audit.map(a=>`<tr><td>${fmtDate(a.created_at)}</td><td>${esc(a.action)}</td><td>${esc(a.target_type)}<br><span class="help">${esc(a.target_id||'')}</span></td><td>${esc(a.actor_user_id||'System')}</td><td><code>${esc(JSON.stringify(a.metadata))}</code></td></tr>`).join('')}</tbody></table></div>`;
 }
+function showSectionPhotoUpload(section) {
+  if (!section) { toast('Select a report section before adding photographs.', 'error'); return; }
+  showModal('Add site photographs', `
+    <p>Upload one or more photographs directly to <strong>${esc(section.title)}</strong>. On a phone or tablet, the file picker can use the camera or photo library.</p>
+    <form id="section-photo-form">
+      <input type="hidden" name="section_id" value="${esc(section.id)}">
+      <div class="field"><label>Photographs</label><input name="file" type="file" accept="image/*" multiple required></div>
+      <div class="field"><label>Caption / observation (optional)</label><textarea name="caption" placeholder="Describe what the photograph shows or why it is relevant to this operational area."></textarea></div>
+      <p class="help">New photographs are included inline by default. A reviewer can later mark individual photographs as supporting only.</p>
+      <button class="btn btn-primary btn-wide" type="submit">Upload photographs</button>
+    </form>`, '');
+}
+
 function showDeleteProspect(id,name){showModal('Permanently delete prospect',`<p>This action permanently deletes the prospect workspace, reports, evidence, publications, and audit-linked customer data. A completed export is required.</p><form id="delete-prospect-form"><input type="hidden" name="prospect_id" value="${esc(id)}"><div class="field"><label>Type the prospect name to confirm</label><input name="confirm_name" required></div><label><input type="checkbox" name="confirm_exported" required> I confirm that the workspace export has been downloaded and retained.</label><button class="btn btn-danger btn-wide" type="submit">Permanently delete ${esc(name)}</button></form>`,'');}
 function showNewUser(){showModal('Create user',`<form id="user-form"><div class="field"><label>Username</label><input name="username" required></div><div class="field"><label>Display name</label><input name="display_name"></div><div class="field"><label>Email</label><input name="email" type="email" required></div><div class="field"><label>Temporary password</label><input name="password" type="password" minlength="14" required></div><div class="field"><label>Roles</label><label><input type="checkbox" name="roles" value="CONTRIBUTOR" checked> Contributor</label><label><input type="checkbox" name="roles" value="REVIEWER"> Reviewer</label><label><input type="checkbox" name="roles" value="OWNER"> Owner</label><label><input type="checkbox" name="roles" value="ADMIN"> Administrator</label></div><button class="btn btn-primary btn-wide" type="submit">Create user</button></form>`,'');}
 function showNewCapability(){showModal('Add controlled capability',`<form id="capability-form"><div class="grid grid-2"><div class="field"><label>Code</label><input name="capability_code" required></div><div class="field"><label>Domain</label><input name="domain" required></div></div><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Controlled description</label><textarea name="controlled_description" required></textarea></div><div class="field"><label>Typical prerequisites</label><textarea name="typical_prerequisites"></textarea></div><div class="field"><label>Limitations</label><textarea name="limitations"></textarea></div><div class="field"><label>Status</label><select name="status"><option>PROPOSED</option><option>APPROVED</option></select></div><div class="field"><label>Source</label><input name="source"></div><button class="btn btn-primary btn-wide" type="submit">Add capability</button></form>`,'');}
@@ -916,6 +929,34 @@ async function handleSubmit(event) {
     if(form.id==='prospect-logo-form'){const fd=new FormData(form);const id=fd.get('prospect_id');fd.delete('prospect_id');await api(`/api/prospects/${id}/logo`,{method:'POST',body:fd},false);closeModal();toast('Prospect logo updated.','success');renderProspect(id,state.activeProspectTab);return;}
     if(form.id==='archive-prospect-form'){await api(`/api/prospects/${prospectId}/archive`,{method:'POST',body:formObject(form)});closeModal();toast('Prospect archived.','success');renderProspect(prospectId);return;}
     const reportId=state.report?.report?.id; const section=selectedSection();
+    if(form.id==='section-photo-form'){
+      const fd=new FormData(form);
+      const targetSectionId=String(fd.get('section_id')||'');
+      const targetSection=state.report?.sections?.find(item=>item.id===targetSectionId && item.state!=='REMOVED');
+      if(!targetSection)throw new Error('The selected report section is no longer available.');
+      const files=Array.from(form.elements.file?.files||[]);
+      if(!files.length)throw new Error('Select at least one photograph to upload.');
+      const caption=String(fd.get('caption')||'').trim();
+      for(const file of files){
+        if(!file.type?.startsWith('image/'))throw new Error(`${file.name} is not an image file.`);
+        if(!navigator.onLine){
+          await queueEvidence({reportId,sectionId:targetSection.id,caption,placement:'INLINE',file});
+        }else{
+          const upload=new FormData();
+          upload.append('section_id',targetSection.id);
+          if(caption)upload.append('caption',caption);
+          upload.append('placement','INLINE');
+          upload.append('classification','CONFIDENTIAL');
+          upload.append('file',file,file.name);
+          await api(`/api/reports/${reportId}/evidence`,{method:'POST',body:upload},false);
+        }
+      }
+      closeModal();
+      updateQueueCount();
+      toast(navigator.onLine?`Photograph${files.length===1?'':'s'} added to ${targetSection.title}.`:`Photograph${files.length===1?'':'s'} queued for ${targetSection.title}.`,'success');
+      await renderReport(reportId,targetSection.id);
+      return;
+    }
     if(form.id==='quick-entry-note-form'){
       const area=document.getElementById('quick-entry-area')?.value||'';
       const destination=quickEntrySection(area);
@@ -967,6 +1008,7 @@ async function handleClick(event) {
     if(action==='add-section'){showAddSection();return;}
     if(action==='remove-section'){showRemoveSection();return;}
     if(action==='new-finding'){showDetailedFinding();return;}
+    if(action==='section-upload-photo'){showSectionPhotoUpload(selectedSection());return;}
     if(action==='focus-photo'||action==='go-quick-entry'){navigateReportScreen('quick-entry');return;}
     if(action==='quick-take-photo'){const area=document.getElementById('quick-entry-area')?.value||'';if(!area)throw new Error('Select an Area of operation before taking a photo.');document.getElementById('quick-entry-camera')?.click();return;}
     if(action==='quick-choose-file'){const area=document.getElementById('quick-entry-area')?.value||'';if(!area)throw new Error('Select an Area of operation before choosing a file.');document.getElementById('quick-entry-file')?.click();return;}

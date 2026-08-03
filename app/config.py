@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     deployment_environment: Literal["local", "staging", "production"] = "local"
     app_component: Literal["web", "worker"] = "web"
     app_name: str = "Cloud Inventory Site Discovery"
-    app_version: str = "0.8.0"
+    app_version: str = "0.8.1"
     app_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./discovery.db"
     session_cookie_name: str = "ci_discovery_session"

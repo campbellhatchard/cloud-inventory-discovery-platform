@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 from .access import accessible_prospect_ids, require_prospect_access, require_report_access
 from .ai_service import (
     build_demo_plan_snapshot,
+    build_executive_summary_snapshot,
     build_observation_snapshot,
+    build_report_quality_snapshot,
     build_solution_snapshot,
     build_targeted_benefits_snapshot,
     evaluate_policy,
@@ -74,6 +76,7 @@ from .models import (
     PromptDefinition,
     Publication,
     Report,
+    ReportContentVersion,
     ReportMember,
     ReportSection,
     ReportTemplate,
@@ -111,6 +114,7 @@ from .schemas import (
     ProspectDeleteRequest,
     PublicationRequest,
     QuickCaptureRequest,
+    ReportContentUpsert,
     ReportCreate,
     ReportUpdate,
     ReportDeleteRequest,
@@ -124,6 +128,13 @@ from .schemas import (
     ValidationRequest,
 )
 from .storage import ObjectStorage, StorageConfigurationError, build_storage_key, safe_filename, storage_configuration_status
+from .readiness import (
+    calculate_admin_operations,
+    calculate_admin_review_queue,
+    calculate_report_readiness,
+    calculate_review_queue,
+    calculate_traceability,
+)
 from .validation import validate_report, validation_passed
 from .documents import convert_docx_to_pdf, generate_docx, refresh_docx_fields
 
@@ -169,6 +180,16 @@ def _next_content_version(db: Session, section_id: str, content_type: str = "CUR
         select(func.max(SectionContentVersion.version)).where(
             SectionContentVersion.section_id == section_id,
             SectionContentVersion.content_type == content_type,
+        )
+    )
+    return int(current or 0) + 1
+
+
+def _next_report_content_version(db: Session, report_id: str, content_type: str) -> int:
+    current = db.scalar(
+        select(func.max(ReportContentVersion.version)).where(
+            ReportContentVersion.report_id == report_id,
+            ReportContentVersion.content_type == content_type,
         )
     )
     return int(current or 0) + 1
@@ -944,6 +965,22 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         ).all()
     )
     solution_by_section = {item.section_id: item for item in solution_versions}
+    executive_summary = db.scalar(
+        select(ReportContentVersion)
+        .where(
+            ReportContentVersion.report_id == report.id,
+            ReportContentVersion.content_type == "EXECUTIVE_SUMMARY",
+            ReportContentVersion.is_current.is_(True),
+        )
+        .order_by(ReportContentVersion.version.desc())
+    )
+    quality_review = db.scalar(
+        select(AiSuggestion)
+        .where(AiSuggestion.report_id == report.id, AiSuggestion.purpose == "REPORT_QUALITY_REVIEW")
+        .order_by(AiSuggestion.created_at.desc())
+    )
+    readiness = calculate_report_readiness(db, report)
+    review_queue = calculate_review_queue(db, report)
     publications = list(
         db.scalars(
             select(Publication)
@@ -960,6 +997,18 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     return {
         "report": {"id": report.id, "prospect_id": report.prospect_id, "engagement_id": report.engagement_id, "site_id": report.site_id, "title": report.title, "report_kind": report.report_kind, "state": report.state, "revision": report.revision, "owner_id": report.owner_id, "updated_at": _iso(report.updated_at)},
         "access_scope": scope,
+        "executive_summary": None if not executive_summary else {
+            "id": executive_summary.id, "version": executive_summary.version, "text": executive_summary.text,
+            "source_type": executive_summary.source_type, "source_refs": executive_summary.source_refs,
+            "created_at": _iso(executive_summary.created_at),
+        },
+        "quality_review": None if not quality_review else {
+            "id": quality_review.id, "content": quality_review.content, "source_refs": quality_review.source_refs,
+            "confidence": quality_review.confidence, "review_state": quality_review.review_state,
+            "created_at": _iso(quality_review.created_at),
+        },
+        "readiness": readiness,
+        "review_queue": review_queue,
         "sections": [{
             "id": s.id, "stable_key": s.stable_key, "title": s.title, "process_module": s.process_module, "display_order": s.display_order,
             "state": s.state, "required_on_final": s.required_on_final, "removed_reason": s.removed_reason, "narrative": s.narrative,
@@ -1028,6 +1077,91 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         "members": [{"user_id": member.user_id, "role_scope": member.role_scope, "display_name": member_user.display_name, "username": member_user.username} for member, member_user in members],
         "comments": [{"id": comment.id, "section_id": comment.section_id, "author_id": comment.author_id, "author_name": comment_user.display_name or comment_user.username, "body": comment.body, "status": comment.status, "created_at": _iso(comment.created_at), "resolved_at": _iso(comment.resolved_at)} for comment, comment_user in comments],
     }
+
+
+@router.get("/reports/{report_id}/content-versions")
+def list_report_content_versions(
+    report_id: str,
+    content_type: str = "EXECUTIVE_SUMMARY",
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    items = list(
+        db.scalars(
+            select(ReportContentVersion)
+            .where(ReportContentVersion.report_id == report.id, ReportContentVersion.content_type == content_type)
+            .order_by(ReportContentVersion.version.desc())
+        ).all()
+    )
+    return [{
+        "id": item.id, "content_type": item.content_type, "version": item.version, "text": item.text,
+        "source_type": item.source_type, "source_refs": item.source_refs, "is_current": item.is_current,
+        "created_at": _iso(item.created_at),
+    } for item in items]
+
+
+@router.put("/reports/{report_id}/content", dependencies=[Depends(require_csrf)])
+def upsert_report_content(
+    report_id: str,
+    payload: ReportContentUpsert,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    current = db.scalar(
+        select(ReportContentVersion)
+        .where(
+            ReportContentVersion.report_id == report.id,
+            ReportContentVersion.content_type == payload.content_type,
+            ReportContentVersion.is_current.is_(True),
+        )
+        .order_by(ReportContentVersion.version.desc())
+    )
+    if payload.expected_version is not None and (not current or current.version != payload.expected_version):
+        raise HTTPException(status_code=409, detail={
+            "message": "Report content changed since it was loaded.",
+            "current_version": current.version if current else None,
+            "current_text": current.text if current else "",
+        })
+    text = payload.text.strip()
+    if current and current.text == text:
+        return {"id": current.id, "version": current.version, "report_revision": report.revision, "unchanged": True}
+    if current:
+        current.is_current = False
+    item = ReportContentVersion(
+        report_id=report.id, content_type=payload.content_type,
+        version=_next_report_content_version(db, report.id, payload.content_type),
+        text=text, source_type="USER", source_refs=[], is_current=True, created_by=user.id,
+    )
+    db.add(item)
+    _increment_report(report)
+    audit(db, actor=user, action="REPORT_CONTENT_UPDATED", target_type="REPORT_CONTENT", target_id=item.id, prospect_id=report.prospect_id, metadata={"content_type": payload.content_type, "version": item.version})
+    db.commit()
+    return {"id": item.id, "version": item.version, "report_revision": report.revision, "unchanged": False}
+
+
+@router.get("/reports/{report_id}/readiness")
+def get_report_readiness(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    return calculate_report_readiness(db, report)
+
+
+@router.get("/reports/{report_id}/review-queue")
+def get_report_review_queue(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    return calculate_review_queue(db, report)
+
+
+@router.get("/reports/{report_id}/traceability")
+def get_report_traceability(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    return calculate_traceability(db, report)
 
 
 @router.get("/reports/{report_id}/sections/{section_id}/content-versions")
@@ -1375,11 +1509,13 @@ def create_metric(report_id: str, payload: MetricCreate, user: User = Depends(en
 
 @router.get("/capabilities")
 def list_capabilities(domain: str | None = None, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
-    stmt = select(Capability).where(Capability.status != "RETIRED").order_by(Capability.domain, Capability.name)
+    stmt = select(Capability).order_by(Capability.domain, Capability.name)
+    if "ADMIN" not in user_roles(db, user.id):
+        stmt = stmt.where(Capability.status != "RETIRED")
     if domain:
         stmt = stmt.where(Capability.domain == domain)
     items = list(db.scalars(stmt).all())
-    return [{"id": c.id, "capability_code": c.capability_code, "name": c.name, "domain": c.domain, "controlled_description": c.controlled_description, "typical_prerequisites": c.typical_prerequisites, "limitations": c.limitations, "status": c.status, "source": c.source, "version": c.version} for c in items]
+    return [{"id": c.id, "capability_code": c.capability_code, "name": c.name, "domain": c.domain, "controlled_description": c.controlled_description, "typical_prerequisites": c.typical_prerequisites, "limitations": c.limitations, "status": c.status, "source": c.source, "product_version": c.product_version, "review_due_at": _iso(c.review_due_at), "last_reviewed_at": _iso(c.last_reviewed_at), "version": c.version} for c in items]
 
 
 @router.post("/admin/capabilities", dependencies=[Depends(require_csrf)])
@@ -1418,6 +1554,8 @@ def review_capability(capability_id: str, payload: ReviewDecision, actor: User =
     if not capability:
         raise HTTPException(404, "Capability not found.")
     capability.status = "APPROVED" if payload.decision == "APPROVED" else "RETIRED"
+    capability.last_reviewed_at = utcnow()
+    capability.last_reviewed_by = actor.id
     capability.version += 1
     knowledge = db.scalar(select(KnowledgeEntry).where(KnowledgeEntry.source_ref == f"capability:{capability.capability_code}"))
     if knowledge:
@@ -2041,6 +2179,22 @@ def request_ai(
         eligible = [item for item in context_snapshot.get("sections") or [] if item.get("priority") != "DO_NOT_SHOW" and item.get("approved_mappings")]
         if not eligible:
             raise HTTPException(409, "Approve at least one capability mapping before generating a demo plan.")
+    elif payload.purpose == "REPORT_QUALITY_REVIEW":
+        if section:
+            raise HTTPException(400, "Whole-report quality review must not specify a section.")
+        context_snapshot = build_report_quality_snapshot(db, report)
+        if not any(item.get("sources") or item.get("mappings") or item.get("benefits") for item in context_snapshot.get("sections") or []):
+            raise HTTPException(409, "Enter report content before requesting a whole-report quality review.")
+    elif payload.purpose == "EXECUTIVE_SUMMARY":
+        if section:
+            raise HTTPException(400, "Executive-summary generation is report-level and must not specify a section.")
+        if payload.parent_suggestion_id:
+            parent_suggestion = db.get(AiSuggestion, payload.parent_suggestion_id)
+            if not parent_suggestion or parent_suggestion.report_id != report.id or parent_suggestion.purpose != "EXECUTIVE_SUMMARY":
+                raise HTTPException(400, "Parent executive-summary suggestion does not belong to this report.")
+        context_snapshot = build_executive_summary_snapshot(db, report)
+        if not any(item.get("sources") or item.get("approved_mappings") or item.get("approved_benefits") for item in context_snapshot.get("sections") or []):
+            raise HTTPException(409, "Enter and approve report content before generating an executive summary.")
 
     decision = evaluate_policy(settings, contains_prospect_confidential_content=True)
     job = AiJob(
@@ -2091,6 +2245,8 @@ def request_ai(
         "SOLUTION_APPROACH": "Cloud Inventory approach queued for generation and human review.",
         "TARGETED_BENEFITS": "Targeted benefits queued for generation and human review.",
         "DEMO_PLAN": "Customer-specific demo plan queued for generation and human review.",
+        "REPORT_QUALITY_REVIEW": "Whole-report quality review queued.",
+        "EXECUTIVE_SUMMARY": "Executive summary queued for generation and human review.",
     }
     message = messages.get(payload.purpose, "AI enhancement queued for generation and human review.")
     return {"ai_job_id": job.id, "status": job.status, "message": message}
@@ -2152,7 +2308,7 @@ def review_ai(
     suggestion.reviewed_by = user.id
     suggestion.review_note = payload.note
     suggestion.reviewed_at = utcnow()
-    applied: dict[str, int | bool] = {"narrative": False, "solution": False, "mappings": 0, "benefits": 0, "demo_plan": False}
+    applied: dict[str, int | bool] = {"narrative": False, "solution": False, "mappings": 0, "benefits": 0, "demo_plan": False, "executive_summary": False}
     content = dict(suggestion.content or {})
     if payload.decision == "APPROVED" and not content.get("_applied"):
         target_section = db.get(ReportSection, suggestion.section_id) if suggestion.section_id else None
@@ -2399,7 +2555,25 @@ def review_ai(
             ))
             applied["demo_plan"] = True
 
-        elif suggested_text and target_section and suggestion.purpose in {"NARRATIVE", "EXECUTIVE_SUMMARY", "ATTACHMENT_REVIEW"}:
+        elif suggestion.purpose == "EXECUTIVE_SUMMARY":
+            if content.get("verification_status") != "PASSED" or not content.get("accept_allowed", False):
+                raise HTTPException(409, "This executive summary contains unsupported claims and cannot be accepted. Refine or regenerate it first.")
+            source_revision = content.get("source_report_revision")
+            if source_revision is not None and int(source_revision) != report.revision:
+                raise HTTPException(409, "The report changed after this executive summary was generated. Generate a new summary before accepting it.")
+            summary_text = str(content.get("summary_text") or content.get("suggested_text") or "").strip()
+            if not summary_text:
+                raise HTTPException(409, "The AI suggestion does not contain a usable executive summary.")
+            for current in db.scalars(select(ReportContentVersion).where(ReportContentVersion.report_id == report.id, ReportContentVersion.content_type == "EXECUTIVE_SUMMARY", ReportContentVersion.is_current.is_(True))).all():
+                current.is_current = False
+            db.add(ReportContentVersion(
+                report_id=report.id, content_type="EXECUTIVE_SUMMARY", version=_next_report_content_version(db, report.id, "EXECUTIVE_SUMMARY"),
+                text=summary_text, source_type="AI_ACCEPTED", source_refs=content.get("source_refs") or [], ai_suggestion_id=suggestion.id,
+                is_current=True, created_by=user.id,
+            ))
+            applied["executive_summary"] = True
+
+        elif suggested_text and target_section and suggestion.purpose in {"NARRATIVE", "ATTACHMENT_REVIEW"}:
             if suggested_text not in target_section.narrative:
                 target_section.narrative = f"{target_section.narrative.strip()}\n\n{suggested_text}".strip()
                 target_section.version += 1
@@ -2508,7 +2682,7 @@ def list_knowledge(approval_state: str | None = None, process_module: str | None
     if prospect_id:
         stmt = stmt.where(KnowledgeEntry.prospect_id == prospect_id)
     items = list(db.scalars(stmt.limit(500)).all())
-    return [{"id": item.id, "source_type": item.source_type, "source_ref": item.source_ref, "title": item.title, "process_module": item.process_module, "content": item.content, "capability_id": item.capability_id, "prospect_id": item.prospect_id, "classification": item.classification, "reusable_across_prospects": item.reusable_across_prospects, "approval_state": item.approval_state, "approved_by": item.approved_by, "created_at": _iso(item.created_at), "updated_at": _iso(item.updated_at)} for item in items]
+    return [{"id": item.id, "source_type": item.source_type, "source_ref": item.source_ref, "title": item.title, "process_module": item.process_module, "content": item.content, "capability_id": item.capability_id, "prospect_id": item.prospect_id, "classification": item.classification, "reusable_across_prospects": item.reusable_across_prospects, "approval_state": item.approval_state, "approved_by": item.approved_by, "review_due_at": _iso(item.review_due_at), "expires_at": _iso(item.expires_at), "last_reviewed_at": _iso(item.last_reviewed_at), "created_at": _iso(item.created_at), "updated_at": _iso(item.updated_at)} for item in items]
 
 
 @router.post("/admin/knowledge", dependencies=[Depends(require_csrf)])
@@ -2633,11 +2807,27 @@ def review_knowledge(entry_id: str, payload: KnowledgeEntryReview, actor: User =
         item.prospect_id = None
         item.classification = "INTERNAL"
     item.reusable_across_prospects = reusable
+    if payload.review_due_at is not None:
+        item.review_due_at = payload.review_due_at
+    if payload.expires_at is not None:
+        item.expires_at = payload.expires_at
     item.approval_state = payload.decision
     item.approved_by = actor.id if payload.decision == "APPROVED" else None
+    item.last_reviewed_at = utcnow()
+    item.last_reviewed_by = actor.id
     audit(db, actor=actor, action="KNOWLEDGE_REVIEWED", target_type="KNOWLEDGE_ENTRY", target_id=item.id, prospect_id=item.prospect_id, metadata={"decision": payload.decision, "reusable": item.reusable_across_prospects, "note": payload.note})
     db.commit()
     return {"ok": True, "approval_state": item.approval_state, "reusable_across_prospects": item.reusable_across_prospects}
+
+
+@router.get("/admin/review-queue")
+def admin_review_queue(actor: User = Depends(require_roles("ADMIN")), db: Session = Depends(get_db)):
+    return calculate_admin_review_queue(db)
+
+
+@router.get("/admin/operations")
+def admin_operations(actor: User = Depends(require_roles("ADMIN")), db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    return calculate_admin_operations(db, settings)
 
 
 @router.get("/admin/branding")

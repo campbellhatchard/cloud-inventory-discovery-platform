@@ -420,3 +420,66 @@ tr:last-child td { border-bottom: 0; }
   .benefit-selection-item { grid-template-columns:1fr; }
   .demo-priority-summary { grid-template-columns:1fr; }
 }
+
+/* v0.8.1 — report quality, readiness, traceability, and operational governance */
+.report-governance-card .governance-summary {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.readiness-table td,
+.readiness-table th {
+  vertical-align: top;
+}
+.readiness-table td:not(:first-child),
+.readiness-table th:not(:first-child) {
+  white-space: nowrap;
+}
+.review-queue-panel {
+  margin-top: 1.25rem;
+  display: grid;
+  gap: .75rem;
+}
+.review-queue-panel > h3 {
+  margin-bottom: 0;
+}
+.review-queue-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.review-queue-item p {
+  margin: .35rem 0 0;
+}
+.quality-issue-list,
+.traceability-list {
+  display: grid;
+  gap: .85rem;
+  margin: 1rem 0;
+}
+.quality-issue,
+.traceability-claim {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.quality-issue p,
+.traceability-claim p {
+  margin: .5rem 0;
+}
+#executive-summary-editor {
+  min-height: 13rem;
+}
+@media (max-width: 900px) {
+  .readiness-table {
+    overflow-x: auto;
+  }
+  .review-queue-item {
+    flex-direction: column;
+  }
+}

@@ -6,11 +6,46 @@ import time
 import traceback
 
 from .ai_service import process_ai_job
-from .config import get_settings
+from .config import Settings, get_settings
 from .database import SessionLocal
 from .jobs import claim_next, complete, fail
 from .maintenance import run_maintenance
+from .models import WorkerHeartbeat, utcnow
 from .publication_service import process_publication
+from .storage import storage_configuration_status
+
+
+def _touch_heartbeat(settings: Settings, *, status: str = "RUNNING", details: dict | None = None) -> None:
+    storage_status = storage_configuration_status(settings)
+    with SessionLocal() as db:
+        heartbeat = db.get(WorkerHeartbeat, "worker")
+        payload = {
+            "hostname": socket.gethostname(),
+            "pid": os.getpid(),
+            "ai_enabled": settings.ai_enabled,
+            "ai_model": settings.openai_model,
+            "confidential_ai_enabled": settings.ai_confidential_content_enabled,
+            "data_control_mode": settings.openai_data_control_mode,
+            **(details or {}),
+        }
+        if heartbeat:
+            heartbeat.app_version = settings.app_version
+            heartbeat.status = status
+            heartbeat.storage_configured = bool(storage_status.get("configured"))
+            heartbeat.details = payload
+            heartbeat.last_seen_at = utcnow()
+        else:
+            db.add(
+                WorkerHeartbeat(
+                    component="worker",
+                    app_version=settings.app_version,
+                    status=status,
+                    storage_configured=bool(storage_status.get("configured")),
+                    details=payload,
+                    last_seen_at=utcnow(),
+                )
+            )
+        db.commit()
 
 
 def run_once(worker_id: str | None = None) -> bool:
@@ -37,9 +72,17 @@ def run_once(worker_id: str | None = None) -> bool:
 def main() -> None:
     settings = get_settings()
     print("Cloud Inventory discovery worker started.")
+    _touch_heartbeat(settings, details={"event": "started"})
     next_maintenance_at = 0.0
+    next_heartbeat_at = 0.0
     while True:
         now = time.monotonic()
+        if now >= next_heartbeat_at:
+            try:
+                _touch_heartbeat(settings, details={"event": "polling"})
+            except Exception:
+                traceback.print_exc()
+            next_heartbeat_at = now + 60.0
         if now >= next_maintenance_at:
             try:
                 with SessionLocal() as db:
@@ -53,6 +96,10 @@ def main() -> None:
             worked = run_once()
         except Exception:
             traceback.print_exc()
+            try:
+                _touch_heartbeat(settings, status="DEGRADED", details={"event": "loop-error"})
+            except Exception:
+                traceback.print_exc()
             time.sleep(max(5.0, settings.job_poll_seconds))
             continue
         if not worked:

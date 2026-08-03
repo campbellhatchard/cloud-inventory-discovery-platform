@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .readiness import calculate_report_readiness
 from .models import (
     AiSuggestion,
     Benefit,
@@ -14,6 +15,7 @@ from .models import (
     EvidenceItem,
     Finding,
     Report,
+    ReportContentVersion,
     ReportSection,
     Response,
 )
@@ -71,6 +73,36 @@ def validate_report(db: Session, report: Report, final_requested: bool) -> list[
     pending_benefits = db.scalar(select(func.count(Benefit.id)).where(Benefit.report_id == report.id, Benefit.approval_state == "PENDING")) or 0
     if pending_benefits:
         add("BENEFITS_PENDING", "ERROR" if final_requested else "WARNING", f"{pending_benefits} benefit statement(s) require approval.")
+
+
+    executive_summary = db.scalar(
+        select(ReportContentVersion.id).where(
+            ReportContentVersion.report_id == report.id,
+            ReportContentVersion.content_type == "EXECUTIVE_SUMMARY",
+            ReportContentVersion.is_current.is_(True),
+        )
+    )
+    if not executive_summary:
+        add(
+            "EXECUTIVE_SUMMARY_MISSING",
+            "WARNING",
+            "The report does not have a current executive summary.",
+        )
+
+    readiness = calculate_report_readiness(db, report)
+    for row in readiness.get("sections") or []:
+        if row.get("status") in {"NOT_APPLICABLE", "READY"}:
+            continue
+        missing = row.get("missing") or []
+        if not missing:
+            continue
+        severity = "WARNING"
+        add(
+            "SECTION_READINESS_GAP",
+            severity,
+            f"Section '{row['title']}' is not fully ready: {', '.join(missing)}.",
+            section_id=row.get("section_id"),
+        )
 
     findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.status != "REJECTED")).all())
     for finding in findings:

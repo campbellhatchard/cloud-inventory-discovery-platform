@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.0
-**Status:** Targeted benefits and demo orchestration build; staging validation required
+**Version:** 0.8.1
+**Status:** Report quality, readiness, executive summary, and operational governance; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -16,7 +16,7 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Application-managed authentication using Argon2id password hashing
 - First-login password change, secure sessions, CSRF protection, and login lockout
 - Contributor, reviewer, owner, and administrator roles
-- Prospect-level isolation, report membership, section assignment, comments, and optimistic concurrency
+- Prospect-level isolation, report membership, comments, and optimistic concurrency
 - Multiple reports per prospect and owner-controlled report merge with lineage
 - Guided prospect creation with optional site and engagement creation
 - Browser-defaulted IANA timezone selection for sites
@@ -39,6 +39,12 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Draft/final validation and publication workflow
 - Denver-styled DOCX and PDF generation with configurable branding and draft watermarking
 - Full Discovery Report, Solution Demonstration Brief, and Customer Follow-up Questionnaire outputs
+- Content-driven report readiness dashboard across current operations, solution approach, approved mappings, benefits, and demo coverage
+- Whole-report AI quality review for completeness, consistency, traceability, unsupported claims, duplication, and follow-up gaps
+- Version-controlled manual and AI-assisted executive summary with factual verification
+- Visible report source and claim traceability classifications
+- Central reviewer queue plus administrator AI, worker, storage, publication, and lifecycle health dashboard
+- Capability and knowledge review dates, product-version applicability, and knowledge expiration controls
 - Prospect export, archive workflow, retention review, legal hold, and controlled deletion
 - Audit log
 - PostgreSQL/Alembic migrations, S3-compatible private object storage, DB-backed worker queue

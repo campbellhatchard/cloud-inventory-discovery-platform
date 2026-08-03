@@ -28,6 +28,7 @@ from .models import (
     Metric,
     PromptDefinition,
     Report,
+    ReportContentVersion,
     ReportSection,
     Response,
     SectionContentVersion,
@@ -100,6 +101,7 @@ def build_context(db: Session, report: Report, section: ReportSection | None, pu
             select(KnowledgeEntry)
             .where(
                 KnowledgeEntry.approval_state == "APPROVED",
+                or_(KnowledgeEntry.expires_at.is_(None), KnowledgeEntry.expires_at > utcnow()),
                 or_(KnowledgeEntry.prospect_id == report.prospect_id, KnowledgeEntry.reusable_across_prospects.is_(True)),
             )
             .order_by(KnowledgeEntry.process_module, KnowledgeEntry.title)
@@ -697,6 +699,7 @@ def build_solution_snapshot(db: Session, report: Report, section: ReportSection)
             select(KnowledgeEntry)
             .where(
                 KnowledgeEntry.approval_state == "APPROVED",
+                or_(KnowledgeEntry.expires_at.is_(None), KnowledgeEntry.expires_at > utcnow()),
                 or_(KnowledgeEntry.prospect_id == report.prospect_id, KnowledgeEntry.reusable_across_prospects.is_(True)),
             )
             .order_by(KnowledgeEntry.updated_at.desc())
@@ -1578,6 +1581,286 @@ def run_demo_plan(
     }
     return content, _merge_usage(usage_items)
 
+
+
+def build_report_quality_snapshot(db: Session, report: Report) -> dict[str, Any]:
+    sections = list(
+        db.scalars(
+            select(ReportSection)
+            .where(ReportSection.report_id == report.id, ReportSection.state != "REMOVED")
+            .order_by(ReportSection.display_order)
+        ).all()
+    )
+    demo_priorities = {item.section_id: item for item in db.scalars(select(DemoSectionPriority).where(DemoSectionPriority.report_id == report.id)).all()}
+    demo_plan = db.scalar(
+        select(DemoPlanVersion)
+        .where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))
+        .order_by(DemoPlanVersion.version.desc())
+    )
+    demo_section_ids = {
+        str(item.get("section_id"))
+        for item in ((demo_plan.content or {}).get("flow") if demo_plan else []) or []
+        if item.get("section_id")
+    }
+    section_payload: list[dict[str, Any]] = []
+    allowed_refs: list[dict[str, Any]] = []
+    for section in sections:
+        responses = db.execute(
+            select(Response, PromptDefinition)
+            .join(PromptDefinition, Response.prompt_id == PromptDefinition.id)
+            .where(Response.section_id == section.id, PromptDefinition.active.is_(True))
+            .order_by(PromptDefinition.display_order)
+        ).all()
+        findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.section_id == section.id, Finding.status != "REJECTED").order_by(Finding.created_at)).all())
+        solution = db.scalar(
+            select(SectionContentVersion)
+            .where(
+                SectionContentVersion.report_id == report.id,
+                SectionContentVersion.section_id == section.id,
+                SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                SectionContentVersion.is_current.is_(True),
+            )
+            .order_by(SectionContentVersion.version.desc())
+        )
+        mappings = db.execute(
+            select(CapabilityMapping, Capability)
+            .join(Capability, CapabilityMapping.capability_id == Capability.id)
+            .where(CapabilityMapping.report_id == report.id, CapabilityMapping.section_id == section.id)
+            .order_by(Capability.name)
+        ).all()
+        benefits = list(db.scalars(select(Benefit).where(Benefit.report_id == report.id, Benefit.section_id == section.id).order_by(Benefit.created_at)).all())
+        sources: list[dict[str, Any]] = []
+        if section.narrative.strip():
+            sources.append({"ref": f"section:{section.id}:narrative", "label": f"{section.title} current operations", "text": section.narrative})
+        for response, prompt in responses:
+            text = response.narrative.strip() or (json.dumps(response.payload, ensure_ascii=False) if response.payload else "")
+            if text:
+                sources.append({"ref": f"response:{response.id}", "label": f"{section.title} — {prompt.question}", "text": text})
+        for finding in findings:
+            sources.append({"ref": f"finding:{finding.id}", "label": f"{section.title} — {finding.finding_type.replace('_', ' ').title()}", "text": finding.statement, "impact": finding.impact})
+        if solution and solution.text.strip():
+            sources.append({"ref": f"solution:{solution.id}", "label": f"{section.title} Cloud Inventory approach", "text": solution.text})
+        mapping_payload = []
+        for mapping, capability in mappings:
+            ref = f"mapping:{mapping.id}"
+            mapping_payload.append({
+                "ref": ref,
+                "approval_state": mapping.approval_state,
+                "capability_code": capability.capability_code,
+                "capability_name": capability.name,
+                "source_ref": mapping.source_ref,
+                "rationale": mapping.rationale,
+                "prerequisites": mapping.prerequisites or capability.typical_prerequisites,
+                "limitations": capability.limitations,
+            })
+            allowed_refs.append({"ref": ref, "label": f"{capability.capability_code} — {capability.name}"})
+        benefit_payload = []
+        for benefit in benefits:
+            ref = f"benefit:{benefit.id}"
+            benefit_payload.append({
+                "ref": ref,
+                "approval_state": benefit.approval_state,
+                "statement": benefit.statement,
+                "category": benefit.category,
+                "measure_type": benefit.measure_type,
+                "source_ref": benefit.source_ref,
+                "formula": benefit.formula,
+                "assumptions": benefit.assumptions,
+            })
+            allowed_refs.append({"ref": ref, "label": benefit.statement})
+        for source in sources:
+            allowed_refs.append({"ref": source["ref"], "label": source["label"]})
+        priority = demo_priorities.get(section.id)
+        section_payload.append({
+            "id": section.id,
+            "title": section.title,
+            "process_module": section.process_module,
+            "version": section.version,
+            "sources": sources,
+            "mappings": mapping_payload,
+            "benefits": benefit_payload,
+            "demo_priority": priority.priority if priority else "OPTIONAL",
+            "demo_user_notes": priority.user_notes if priority else "",
+            "demo_constraints": priority.constraints if priority else "",
+            "demo_covered": section.id in demo_section_ids,
+        })
+    summary = db.scalar(select(ReportContentVersion).where(ReportContentVersion.report_id == report.id, ReportContentVersion.content_type == "EXECUTIVE_SUMMARY", ReportContentVersion.is_current.is_(True)).order_by(ReportContentVersion.version.desc()))
+    return {
+        "purpose": "REPORT_QUALITY_REVIEW",
+        "report": {"id": report.id, "title": report.title, "revision": report.revision, "state": report.state},
+        "sections": section_payload,
+        "executive_summary": None if not summary else {"id": summary.id, "version": summary.version, "text": summary.text, "source_refs": summary.source_refs},
+        "demo_plan": None if not demo_plan else {"version": demo_plan.version, "content": demo_plan.content},
+        "allowed_source_refs": allowed_refs,
+    }
+
+
+def _normalize_quality_issues(value: Any, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    valid_sections = {str(item.get("id")): item for item in snapshot.get("sections") or []}
+    allowed_refs = {str(item.get("ref")) for item in snapshot.get("allowed_source_refs") or [] if item.get("ref")}
+    issues: list[dict[str, Any]] = []
+    for raw in value or []:
+        if not isinstance(raw, dict):
+            continue
+        message = str(raw.get("message") or raw.get("issue") or "").strip()
+        recommendation = str(raw.get("recommendation") or raw.get("action") or "").strip()
+        if not message:
+            continue
+        section_id = str(raw.get("section_id") or "").strip() or None
+        if section_id and section_id not in valid_sections:
+            section_id = None
+        severity = str(raw.get("severity") or "WARNING").upper()
+        if severity not in {"INFO", "WARNING", "ERROR"}:
+            severity = "WARNING"
+        refs = [str(ref) for ref in raw.get("source_refs") or [] if str(ref) in allowed_refs]
+        issues.append({
+            "category": str(raw.get("category") or "COMPLETENESS").upper(),
+            "severity": severity,
+            "section_id": section_id,
+            "section_title": valid_sections.get(section_id, {}).get("title") if section_id else None,
+            "message": message,
+            "recommendation": recommendation,
+            "source_refs": refs,
+        })
+    return issues[:100]
+
+
+def _verify_quality_review(settings: Settings, snapshot: dict[str, Any], review: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    system = (
+        "You verify an AI-generated quality review of a Cloud Inventory discovery report. Use only the supplied report packet. "
+        "Block any issue, strength, or recommendation that asserts a customer fact, product behavior, contradiction, omission, or dependency not supported by the packet. "
+        "Return only JSON with verification_status (PASSED or BLOCKED) and unsupported_claims."
+    )
+    result, usage = _call_json(settings, system=system, user_content=json.dumps({"source_packet": snapshot, "proposed_review": review}, ensure_ascii=False))
+    unsupported = result.get("unsupported_claims") or []
+    status = str(result.get("verification_status") or ("BLOCKED" if unsupported else "PASSED")).upper()
+    if status not in {"PASSED", "BLOCKED"}:
+        status = "BLOCKED" if unsupported else "PASSED"
+    return {"verification_status": status, "unsupported_claims": unsupported}, usage
+
+
+def run_report_quality_review(settings: Settings, snapshot: dict[str, Any], instructions: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    system = (
+        "You are a senior professional-services quality reviewer. Review the complete Cloud Inventory discovery packet for completeness, internal consistency, traceability, unsupported claims, duplicated content, unresolved findings, missing solution coverage, missing benefits, and demo-plan alignment. "
+        "General notes are valid observations. Do not invent customer facts or product behavior. Do not rewrite the report. Produce review recommendations only. "
+        "Return only JSON with overall_assessment, strengths, issues, and follow_up_questions. Each issue must contain category, severity, section_id when applicable, message, recommendation, and source_refs."
+    )
+    generated, usage1 = _call_json(settings, system=system, user_content=json.dumps({"source_packet": snapshot, "user_instruction": instructions or None}, ensure_ascii=False))
+    review = {
+        "overall_assessment": str(generated.get("overall_assessment") or generated.get("summary") or "").strip(),
+        "strengths": [str(item).strip() for item in generated.get("strengths") or [] if str(item).strip()],
+        "issues": _normalize_quality_issues(generated.get("issues") or [], snapshot),
+        "follow_up_questions": [str(item).strip() for item in generated.get("follow_up_questions") or generated.get("questions") or [] if str(item).strip()],
+    }
+    verification, usage2 = _verify_quality_review(settings, snapshot, review)
+    labels = {str(item.get("ref")): item.get("label") or item.get("ref") for item in snapshot.get("allowed_source_refs") or []}
+    used_refs: list[str] = []
+    for issue in review["issues"]:
+        for ref in issue.get("source_refs") or []:
+            if ref not in used_refs:
+                used_refs.append(ref)
+    return {
+        **review,
+        "source_refs": [{"ref": ref, "label": labels.get(ref, ref)} for ref in used_refs],
+        "source_snapshot": snapshot,
+        "verification_status": verification["verification_status"],
+        "unsupported_claims": verification.get("unsupported_claims") or [],
+        "source_report_revision": snapshot.get("report", {}).get("revision"),
+    }, _merge_usage([usage1, usage2])
+
+
+def build_executive_summary_snapshot(db: Session, report: Report) -> dict[str, Any]:
+    quality_snapshot = build_report_quality_snapshot(db, report)
+    current = db.scalar(select(ReportContentVersion).where(ReportContentVersion.report_id == report.id, ReportContentVersion.content_type == "EXECUTIVE_SUMMARY", ReportContentVersion.is_current.is_(True)).order_by(ReportContentVersion.version.desc()))
+    accepted_sections = []
+    for section in quality_snapshot.get("sections") or []:
+        approved_mappings = [item for item in section.get("mappings") or [] if item.get("approval_state") == "APPROVED"]
+        approved_benefits = [item for item in section.get("benefits") or [] if item.get("approval_state") == "APPROVED"]
+        accepted_sections.append({
+            "id": section.get("id"),
+            "title": section.get("title"),
+            "process_module": section.get("process_module"),
+            "sources": section.get("sources") or [],
+            "approved_mappings": approved_mappings,
+            "approved_benefits": approved_benefits,
+        })
+    return {
+        "purpose": "EXECUTIVE_SUMMARY",
+        "report": quality_snapshot["report"],
+        "sections": accepted_sections,
+        "demo_plan": quality_snapshot.get("demo_plan"),
+        "current_summary": None if not current else {"id": current.id, "version": current.version, "text": current.text},
+        "allowed_source_refs": quality_snapshot.get("allowed_source_refs") or [],
+    }
+
+
+def _verify_executive_summary(settings: Settings, snapshot: dict[str, Any], summary_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    system = (
+        "You verify a customer-facing executive summary only against the supplied accepted discovery packet. "
+        "Block invented customer facts, unapproved capabilities, unsupported benefits, numerical claims, guarantees, causes, or conclusions. "
+        "Neutral synthesis and clearly stated open dependencies are allowed. Return only JSON with verification_status and unsupported_claims."
+    )
+    result, usage = _call_json(settings, system=system, user_content=json.dumps({"source_packet": snapshot, "proposed_summary": summary_text}, ensure_ascii=False))
+    unsupported = result.get("unsupported_claims") or []
+    status = str(result.get("verification_status") or ("BLOCKED" if unsupported else "PASSED")).upper()
+    if status not in {"PASSED", "BLOCKED"}:
+        status = "BLOCKED" if unsupported else "PASSED"
+    return {"verification_status": status, "unsupported_claims": unsupported}, usage
+
+
+def run_executive_summary(settings: Settings, snapshot: dict[str, Any], instructions: str | None, prior_suggestion: AiSuggestion | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    prior_text = ""
+    if prior_suggestion:
+        prior_text = str((prior_suggestion.content or {}).get("summary_text") or (prior_suggestion.content or {}).get("suggested_text") or "").strip()
+    system = (
+        "You are a senior Cloud Inventory professional-services writer creating a concise customer-facing executive summary. "
+        "Use only the supplied accepted current-state content, approved mappings, approved benefits, accepted demo context, and explicit gaps. "
+        "Summarize operational context, principal observations, solution themes, expected qualitative benefits, open dependencies, and recommended next steps. "
+        "Do not invent product capabilities, numerical improvements, commitments, or customer facts. Return only JSON with summary_text, source_refs, and gaps."
+    )
+    generated, usage1 = _call_json(settings, system=system, user_content=json.dumps({
+        "source_packet": snapshot,
+        "current_summary": snapshot.get("current_summary"),
+        "prior_ai_summary": prior_text or None,
+        "user_refinement_instruction": instructions or None,
+    }, ensure_ascii=False))
+    summary_text = str(generated.get("summary_text") or generated.get("suggested_text") or generated.get("summary") or "").strip()
+    if not summary_text:
+        raise ValueError("AI did not return an executive summary.")
+    verification, usage2 = _verify_executive_summary(settings, snapshot, summary_text)
+    usage_items = [usage1, usage2]
+    if verification["verification_status"] == "BLOCKED":
+        repaired, repair_usage = _call_json(settings, system=(
+            "Rewrite the executive summary to remove or cautiously rephrase every unsupported claim. Use only the same source packet. Return only JSON with summary_text, source_refs, and gaps."
+        ), user_content=json.dumps({"source_packet": snapshot, "proposed_summary": summary_text, "issues": verification.get("unsupported_claims") or []}, ensure_ascii=False))
+        usage_items.append(repair_usage)
+        repaired_text = str(repaired.get("summary_text") or repaired.get("suggested_text") or "").strip()
+        if repaired_text:
+            summary_text = repaired_text
+            verification, verify_usage2 = _verify_executive_summary(settings, snapshot, summary_text)
+            usage_items.append(verify_usage2)
+            generated = repaired
+    allowed_refs = {str(item.get("ref")) for item in snapshot.get("allowed_source_refs") or [] if item.get("ref")}
+    labels = {str(item.get("ref")): item.get("label") or item.get("ref") for item in snapshot.get("allowed_source_refs") or []}
+    refs = []
+    for raw in generated.get("source_refs") or []:
+        ref = str(raw.get("ref") if isinstance(raw, dict) else raw)
+        if ref in allowed_refs and ref not in refs:
+            refs.append(ref)
+    return {
+        "summary_text": summary_text,
+        "suggested_text": summary_text,
+        "gaps": [str(item).strip() for item in generated.get("gaps") or [] if str(item).strip()],
+        "source_refs": [{"ref": ref, "label": labels.get(ref, ref)} for ref in refs],
+        "source_snapshot": snapshot,
+        "verification_status": verification["verification_status"],
+        "unsupported_claims": verification.get("unsupported_claims") or [],
+        "accept_allowed": verification["verification_status"] == "PASSED",
+        "source_report_revision": snapshot.get("report", {}).get("revision"),
+        "parent_suggestion_id": prior_suggestion.id if prior_suggestion else None,
+    }, _merge_usage(usage_items)
+
+
 def process_ai_job(db: Session, ai_job_id: str, settings: Settings) -> AiSuggestion:
     job = db.get(AiJob, ai_job_id)
     if not job:
@@ -1643,6 +1926,19 @@ def process_ai_job(db: Session, ai_job_id: str, settings: Settings) -> AiSuggest
             if parent and (parent.report_id != report.id or parent.purpose != "DEMO_PLAN"):
                 raise ValueError("Parent demo-plan suggestion does not belong to this report")
             content, usage = run_demo_plan(settings, snapshot, job.instructions, parent)
+        elif job.purpose == "REPORT_QUALITY_REVIEW":
+            snapshot = dict(job.context_snapshot or {})
+            if not snapshot:
+                snapshot = build_report_quality_snapshot(db, report)
+            content, usage = run_report_quality_review(settings, snapshot, job.instructions)
+        elif job.purpose == "EXECUTIVE_SUMMARY":
+            snapshot = dict(job.context_snapshot or {})
+            if not snapshot:
+                snapshot = build_executive_summary_snapshot(db, report)
+            parent = db.get(AiSuggestion, job.parent_suggestion_id) if job.parent_suggestion_id else None
+            if parent and (parent.report_id != report.id or parent.purpose != "EXECUTIVE_SUMMARY"):
+                raise ValueError("Parent executive-summary suggestion does not belong to this report")
+            content, usage = run_executive_summary(settings, snapshot, job.instructions, parent)
         else:
             context = build_context(db, report, section, job.purpose, job.instructions)
             content, usage = run_ai(settings, context)

@@ -36,6 +36,7 @@ from .models import (
     PromptDefinition,
     Prospect,
     Report,
+    ReportContentVersion,
     ReportSection,
     Response,
     SectionContentVersion,
@@ -567,6 +568,19 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         sections = [s for s in all_sections if has_publishable_content(s)]
 
     _add_toc(doc)
+    if publication_type == "FULL_DISCOVERY":
+        executive_summary = db.scalar(
+            select(ReportContentVersion)
+            .where(
+                ReportContentVersion.report_id == report.id,
+                ReportContentVersion.content_type == "EXECUTIVE_SUMMARY",
+                ReportContentVersion.is_current.is_(True),
+            )
+            .order_by(ReportContentVersion.version.desc())
+        )
+        if executive_summary and executive_summary.text.strip():
+            doc.add_heading("Executive Summary", level=1)
+            _add_text(doc, executive_summary.text)
     if publication_type == "DEMO_BRIEF" and demo_plan_version and demo_plan_version.content:
         _add_demo_plan_document(doc, demo_plan_version.content, demo_settings)
         sections = []

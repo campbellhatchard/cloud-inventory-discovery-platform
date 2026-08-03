@@ -45,7 +45,8 @@
               "OBSERVATION_ENHANCEMENT",
               "SOLUTION_APPROACH",
               "TARGETED_BENEFITS",
-              "DEMO_PLAN"
+              "DEMO_PLAN",
+              "REPORT_QUALITY_REVIEW"
             ],
             "title": "Purpose",
             "type": "string"
@@ -475,6 +476,30 @@
             "title": "Name",
             "type": "string"
           },
+          "product_version": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Version"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
+          },
           "source": {
             "anyOf": [
               {
@@ -656,6 +681,30 @@
               }
             ],
             "title": "Name"
+          },
+          "product_version": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Version"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
           },
           "source": {
             "anyOf": [
@@ -994,6 +1043,18 @@
             "title": "Content",
             "type": "string"
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
           "process_module": {
             "anyOf": [
               {
@@ -1021,6 +1082,18 @@
             "default": false,
             "title": "Reusable Across Prospects",
             "type": "boolean"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
           },
           "source_ref": {
             "anyOf": [
@@ -1076,6 +1149,18 @@
             "title": "Decision",
             "type": "string"
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
           "note": {
             "anyOf": [
               {
@@ -1097,6 +1182,18 @@
               }
             ],
             "title": "Reusable Across Prospects"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
           },
           "title": {
             "anyOf": [
@@ -1496,6 +1593,36 @@
           "note"
         ],
         "title": "QuickCaptureRequest",
+        "type": "object"
+      },
+      "ReportContentUpsert": {
+        "properties": {
+          "content_type": {
+            "const": "EXECUTIVE_SUMMARY",
+            "default": "EXECUTIVE_SUMMARY",
+            "title": "Content Type",
+            "type": "string"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 50000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "title": "ReportContentUpsert",
         "type": "object"
       },
       "ReportCreate": {
@@ -1949,7 +2076,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.0"
+    "version": "0.8.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2424,6 +2551,22 @@
         "summary": "Review Knowledge"
       }
     },
+    "/api/admin/operations": {
+      "get": {
+        "operationId": "admin_operations_api_admin_operations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Operations"
+      }
+    },
     "/api/admin/prospects/{prospect_id}": {
       "delete": {
         "operationId": "permanently_delete_prospect_api_admin_prospects__prospect_id__delete",
@@ -2507,6 +2650,22 @@
           }
         },
         "summary": "Retention Due"
+      }
+    },
+    "/api/admin/review-queue": {
+      "get": {
+        "operationId": "admin_review_queue_api_admin_review_queue_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Review Queue"
       }
     },
     "/api/admin/users": {
@@ -3939,6 +4098,100 @@
         "summary": "Resolve Comment"
       }
     },
+    "/api/reports/{report_id}/content": {
+      "put": {
+        "operationId": "upsert_report_content_api_reports__report_id__content_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportContentUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Report Content"
+      }
+    },
+    "/api/reports/{report_id}/content-versions": {
+      "get": {
+        "operationId": "list_report_content_versions_api_reports__report_id__content_versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "content_type",
+            "required": false,
+            "schema": {
+              "default": "EXECUTIVE_SUMMARY",
+              "title": "Content Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Report Content Versions"
+      }
+    },
     "/api/reports/{report_id}/demo-plan-versions": {
       "get": {
         "operationId": "list_demo_plan_versions_api_reports__report_id__demo_plan_versions_get",
@@ -4481,6 +4734,80 @@
         "summary": "Quick Capture"
       }
     },
+    "/api/reports/{report_id}/readiness": {
+      "get": {
+        "operationId": "get_report_readiness_api_reports__report_id__readiness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Report Readiness"
+      }
+    },
+    "/api/reports/{report_id}/review-queue": {
+      "get": {
+        "operationId": "get_report_review_queue_api_reports__report_id__review_queue_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Report Review Queue"
+      }
+    },
     "/api/reports/{report_id}/sections": {
       "post": {
         "operationId": "add_section_api_reports__report_id__sections_post",
@@ -4806,6 +5133,43 @@
           }
         },
         "summary": "Upsert Response"
+      }
+    },
+    "/api/reports/{report_id}/traceability": {
+      "get": {
+        "operationId": "get_report_traceability_api_reports__report_id__traceability_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Report Traceability"
       }
     },
     "/api/reports/{report_id}/validate": {

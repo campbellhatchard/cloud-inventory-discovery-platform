@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
@@ -92,6 +92,12 @@ class SectionUpdate(BaseModel):
 
 class SectionContentUpsert(BaseModel):
     content_type: Literal["CLOUD_INVENTORY_APPROACH"] = "CLOUD_INVENTORY_APPROACH"
+    text: str = Field(default="", max_length=50000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class ReportContentUpsert(BaseModel):
+    content_type: Literal["EXECUTIVE_SUMMARY"] = "EXECUTIVE_SUMMARY"
     text: str = Field(default="", max_length=50000)
     expected_version: int | None = Field(default=None, ge=1)
 
@@ -219,6 +225,7 @@ class AiRequest(BaseModel):
         "SOLUTION_APPROACH",
         "TARGETED_BENEFITS",
         "DEMO_PLAN",
+        "REPORT_QUALITY_REVIEW",
     ]
     instructions: str | None = Field(default=None, max_length=4000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
@@ -245,6 +252,8 @@ class CapabilityCreate(BaseModel):
     limitations: str | None = None
     status: Literal["PROPOSED", "APPROVED", "RETIRED"] = "PROPOSED"
     source: str | None = None
+    product_version: str | None = Field(default=None, max_length=100)
+    review_due_at: datetime | None = None
 
 
 class CapabilityUpdate(BaseModel):
@@ -256,6 +265,8 @@ class CapabilityUpdate(BaseModel):
     limitations: str | None = None
     status: Literal["PROPOSED", "APPROVED", "RETIRED"] | None = None
     source: str | None = None
+    product_version: str | None = Field(default=None, max_length=100)
+    review_due_at: datetime | None = None
     expected_version: int | None = Field(default=None, ge=1)
 
 
@@ -274,6 +285,8 @@ class KnowledgeEntryCreate(BaseModel):
     prospect_id: str | None = None
     classification: Literal["INTERNAL", "CONFIDENTIAL", "PUBLIC"] = "INTERNAL"
     reusable_across_prospects: bool = False
+    review_due_at: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class KnowledgeEntryReview(BaseModel):
@@ -281,6 +294,8 @@ class KnowledgeEntryReview(BaseModel):
     reusable_across_prospects: bool | None = None
     title: str | None = Field(default=None, min_length=2, max_length=250)
     content: str | None = Field(default=None, min_length=2)
+    review_due_at: datetime | None = None
+    expires_at: datetime | None = None
     note: str | None = None
 
 

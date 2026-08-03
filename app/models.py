@@ -190,6 +190,22 @@ class Report(Base, TimestampMixin):
     recovery_delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ReportContentVersion(Base):
+    __tablename__ = "report_content_versions"
+    __table_args__ = (UniqueConstraint("report_id", "content_type", "version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
+    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
+    content_type: Mapped[str] = mapped_column(String(50), default="EXECUTIVE_SUMMARY")
+    version: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text, default="")
+    source_type: Mapped[str] = mapped_column(String(30), default="USER")
+    source_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    ai_suggestion_id: Mapped[str | None] = mapped_column(ForeignKey("ai_suggestions.id", ondelete="SET NULL"))
+    is_current: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ReportMember(Base):
     __tablename__ = "report_members"
     report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True)
@@ -338,6 +354,10 @@ class Capability(Base, TimestampMixin):
     limitations: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default="PROPOSED")
     source: Mapped[str | None] = mapped_column(Text)
+    product_version: Mapped[str | None] = mapped_column(String(100))
+    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     version: Mapped[int] = mapped_column(Integer, default=1)
 
 
@@ -439,6 +459,10 @@ class KnowledgeEntry(Base, TimestampMixin):
     reusable_across_prospects: Mapped[bool] = mapped_column(Boolean, default=False)
     approval_state: Mapped[str] = mapped_column(String(20), default="PENDING")
     approved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
 
@@ -571,6 +595,16 @@ class AuditEvent(Base):
     request_id: Mapped[str | None] = mapped_column(String(100))
     event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class WorkerHeartbeat(Base):
+    __tablename__ = "worker_heartbeats"
+    component: Mapped[str] = mapped_column(String(50), primary_key=True)
+    app_version: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(30), default="RUNNING")
+    storage_configured: Mapped[bool] = mapped_column(Boolean, default=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Job(Base):

@@ -463,6 +463,23 @@ function sectionOriginalInputSummary(section) {
   return parts.join('\n\n') || 'No written observations have been entered yet. You can still use selected photographs as evidence.';
 }
 
+
+function sectionObservationSources(section) {
+  const sources = [];
+  if (section.narrative?.trim()) {
+    sources.push({ref:'section:narrative', type:'OBSERVATION', label:'Observation — Current operations narrative', statement:section.narrative.trim(), general:true});
+  }
+  for (const response of section.responses || []) {
+    const text = (response.narrative || '').trim() || (response.payload ? JSON.stringify(response.payload) : '');
+    if (!text) continue;
+    sources.push({ref:`response:${response.id}`, type:'OBSERVATION', label:`Observation — ${response.question}`, statement:text, general:true});
+  }
+  for (const finding of state.report.findings.filter(item => item.section_id === section.id && item.status !== 'REJECTED')) {
+    sources.push({ref:`finding:${finding.id}`, type:finding.finding_type, label:`${finding.finding_type.replaceAll('_',' ')} — ${finding.statement}`, statement:finding.statement, general:false, findingId:finding.id});
+  }
+  return sources;
+}
+
 function sectionAiPhotos(section) {
   return state.report.evidence.filter(item => item.section_id === section.id && item.file?.mime_type?.startsWith('image/'));
 }
@@ -562,8 +579,97 @@ async function showSectionContentHistory(section) {
   showModal('Current Operations Version History', versions.length ? `<div class="version-history">${versions.map(item => `<article class="finding"><div class="section-head"><div><strong>Version ${item.version}</strong><div class="card-meta"><span>${esc(item.source_type.replaceAll('_',' '))}</span><span>${esc(fmtDateTime(item.created_at))}</span></div></div>${item.is_current ? '<span class="badge badge-success">CURRENT</span>' : ''}</div><p class="version-text">${esc(item.text || '(blank original narrative)').replaceAll('\n','<br>')}</p></article>`).join('')}</div>` : '<p>No accepted AI enhancement history exists for this section yet.</p>', '');
 }
 
+
+function renderSolutionApproachResult(job, section) {
+  const result = job?.suggestion?.content || {};
+  const solutionText = result.solution_text || result.suggested_text || '';
+  const target = document.getElementById('ai-solution-output');
+  if (!target) return;
+  const passed = result.verification_status === 'PASSED' && result.accept_allowed !== false;
+  const mappings = result.capability_mappings || [];
+  const sources = result.source_refs || [];
+  const gaps = result.gaps || [];
+  const unsupported = result.unsupported_claims || [];
+  const canAccept = passed && canReview(state.report.access_scope);
+  target.innerHTML = `
+    <div class="ai-result-head"><span class="badge ${passed ? 'badge-success' : 'badge-danger'}">${esc(result.verification_status || 'REVIEW REQUIRED')}</span><button class="btn btn-ghost btn-small" type="button" data-action="speak-ai-text" ${solutionText ? '' : 'disabled'}>🔊 Read aloud</button></div>
+    <textarea id="ai-solution-text" class="ai-comparison-text" readonly>${esc(solutionText)}</textarea>
+    ${mappings.length ? `<div class="ai-trace"><strong>Proposed capability mappings</strong><ul>${mappings.map(item => { const cap=state.capabilities.find(c=>c.id===item.capability_id); return `<li><strong>${esc(cap ? `${cap.capability_code} — ${cap.name}` : item.capability_id)}</strong><br>${esc(aiSourceRefLabel(item.source_ref, section))}<br><span class="help">${esc(item.rationale || '')}</span></li>`; }).join('')}</ul></div>` : ''}
+    ${sources.length ? `<div class="ai-trace"><strong>Grounding sources</strong><ul>${sources.map(item => `<li>${esc(aiSourceRefLabel(item, section))}</li>`).join('')}</ul></div>` : ''}
+    ${gaps.length ? `<div class="ai-trace"><strong>Gaps or confirmations required</strong><ul>${gaps.map(item => `<li>${esc(typeof item === 'string' ? item : JSON.stringify(item))}</li>`).join('')}</ul></div>` : ''}
+    ${unsupported.length ? `<div class="validation-item ERROR"><strong>Unsupported product claims or mappings detected.</strong><ul>${unsupported.map(item => `<li>${esc(item.text || JSON.stringify(item))}${item.reason ? ` — ${esc(item.reason)}` : ''}</li>`).join('')}</ul><p>Acceptance is disabled until the approach is regenerated or refined.</p></div>` : ''}
+    ${!canReview(state.report.access_scope) ? '<div class="validation-item WARNING">A Reviewer or Owner must approve customer-facing Cloud Inventory solution wording.</div>' : ''}
+    <div class="field ai-refinement-field"><label for="ai-solution-refinement">Refine the Cloud Inventory approach</label><textarea id="ai-solution-refinement" placeholder="For example: Emphasize directed picking, explain the ERP dependency, or make this more concise without adding unsupported capability claims."></textarea></div>
+    <div class="card-actions"><button class="btn btn-secondary" type="button" data-action="refine-solution-approach" data-suggestion-id="${esc(job.suggestion.id)}">Refine</button><button class="btn btn-primary" type="button" data-action="accept-solution-approach" data-suggestion-id="${esc(job.suggestion.id)}" ${canAccept ? '' : 'disabled'}>Accept Cloud Inventory approach</button></div>`;
+  target.dataset.enhancedText = solutionText;
+}
+
+async function pollSolutionApproach(jobId, section, token) {
+  const output = document.getElementById('ai-solution-output');
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    if (token !== state.aiEnhancementPollToken || !document.getElementById('ai-solution-modal')) return;
+    const job = await api(`/api/ai-jobs/${jobId}`, {}, false);
+    if (job.status === 'COMPLETED' && job.suggestion) {
+      renderSolutionApproachResult(job, section);
+      return;
+    }
+    if (['FAILED','BLOCKED'].includes(job.status)) {
+      if (output) output.innerHTML = `<div class="validation-item ERROR"><strong>Cloud Inventory approach generation failed.</strong><p>${esc(job.error || job.policy_decision?.reason || 'The AI job could not be completed.')}</p></div>`;
+      return;
+    }
+    if (output) output.innerHTML = '<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Assessing operational observations against approved Cloud Inventory capabilities and knowledge…</p></div>';
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+  if (output) output.innerHTML = '<div class="validation-item ERROR">Cloud Inventory approach generation timed out. You can close this window and try again.</div>';
+}
+
+async function requestSolutionApproach(section, parentSuggestionId = null) {
+  const instruction = document.getElementById('ai-solution-refinement')?.value?.trim() || null;
+  const output = document.getElementById('ai-solution-output');
+  if (output) output.innerHTML = '<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Assessing operational observations against approved Cloud Inventory capabilities and knowledge…</p></div>';
+  const result = await api(`/api/reports/${state.report.report.id}/ai`, {
+    method:'POST',
+    body:{
+      section_id:section.id,
+      purpose:'SOLUTION_APPROACH',
+      instructions:instruction,
+      parent_suggestion_id:parentSuggestionId,
+    },
+  }, false);
+  const token = ++state.aiEnhancementPollToken;
+  await pollSolutionApproach(result.ai_job_id, section, token);
+}
+
+async function showSolutionApproach(section) {
+  if (!navigator.onLine) throw new Error('Cloud Inventory approach generation requires an online connection.');
+  if (!state.aiStatus?.policy?.allowed) throw new Error(state.aiStatus?.policy?.reason || 'AI enhancement is not configured for this environment.');
+  const approvedCapabilities = state.capabilities.filter(item => item.status === 'APPROVED');
+  if (!approvedCapabilities.length) throw new Error('No approved Cloud Inventory capabilities are available. Review the capability catalog in Administration first.');
+  const sources = sectionObservationSources(section);
+  if (!sources.length) throw new Error('Enter current operations notes, guided responses, or findings before generating a Cloud Inventory approach.');
+  const current = section.cloud_inventory_approach?.text || '';
+  closeModal();
+  const wrap = document.createElement('div');
+  wrap.id = 'modal-root';
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<section id="ai-solution-modal" class="modal ai-enhancement-modal" role="dialog" aria-modal="true" aria-label="Generate Cloud Inventory approach for ${esc(section.title)}">
+    <div class="section-head"><div><div class="card-meta"><span class="badge badge-cyan">CLOUD INVENTORY SOLUTION INTELLIGENCE</span><span>${esc(section.title)}</span></div><h2>Generate and refine the Cloud Inventory approach</h2><p class="help">The AI is restricted to approved Cloud Inventory capabilities, approved knowledge, and the observations captured in this section. General notes and guided responses are treated as Observations for functionality mapping.</p></div><button class="btn btn-ghost btn-small" data-action="close-modal">Close</button></div>
+    <div class="ai-comparison-grid">
+      <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>Operational context and current approach</h3><span class="badge">Source controlled</span></div><textarea class="ai-comparison-text" readonly>${esc(sectionOriginalInputSummary(section))}</textarea>${current ? `<div class="ai-trace"><strong>Current accepted Cloud Inventory approach</strong><p>${esc(current)}</p></div>` : '<p class="help">No Cloud Inventory approach has been accepted for this section yet.</p>'}</section>
+      <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>AI-proposed Cloud Inventory approach</h3><span class="help">Reviewer approval required</span></div><div id="ai-solution-output"><div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Preparing solution assessment…</p></div></div></section>
+    </div>
+  </section>`;
+  document.body.appendChild(wrap);
+  await requestSolutionApproach(section);
+}
+
+async function showSolutionContentHistory(section) {
+  const versions = await api(`/api/reports/${state.report.report.id}/sections/${section.id}/content-versions?content_type=CLOUD_INVENTORY_APPROACH`);
+  showModal('Cloud Inventory Approach Version History', versions.length ? `<div class="version-history">${versions.map(item => `<article class="finding"><div class="section-head"><div><strong>Version ${item.version}</strong><div class="card-meta"><span>${esc(item.source_type.replaceAll('_',' '))}</span><span>${esc(fmtDateTime(item.created_at))}</span></div></div>${item.is_current ? '<span class="badge badge-success">CURRENT</span>' : ''}</div><p class="version-text">${esc(item.text || '(blank)').replaceAll('\n','<br>')}</p></article>`).join('')}</div>` : '<p>No accepted Cloud Inventory approach history exists for this section yet.</p>', '');
+}
+
 function speakAiText() {
-  const text = document.getElementById('ai-enhanced-output')?.dataset.enhancedText || document.getElementById('ai-enhanced-text')?.value || '';
+  const text = document.getElementById('ai-enhanced-output')?.dataset.enhancedText || document.getElementById('ai-solution-output')?.dataset.enhancedText || document.getElementById('ai-enhanced-text')?.value || document.getElementById('ai-solution-text')?.value || '';
   if (!text) return;
   if (!('speechSynthesis' in window)) { toast('Text-to-speech is not supported by this browser.','error'); return; }
   window.speechSynthesis.cancel();
@@ -579,6 +685,11 @@ function reportSectionContent(section) {
   const answered = new Map(section.responses.map(r => [r.prompt_id, r]));
   const findings = report.findings.filter(f => f.section_id === section.id);
   const evidence = report.evidence.filter(e => e.section_id === section.id);
+  const generalObservations = sectionObservationSources(section).filter(item => item.general);
+  const approach = section.cloud_inventory_approach;
+  const approvedMappings = report.capability_mappings.filter(item => item.section_id === section.id && item.approval_state === 'APPROVED');
+  const approvedCapabilityCount = state.capabilities.filter(item => item.status === 'APPROVED').length;
+  const solutionEnabled = Boolean(section.process_module && state.aiStatus?.policy?.allowed && approvedCapabilityCount && sectionObservationSources(section).length);
   return `
     <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions(section.id)}</select></div>
     <section class="card">
@@ -590,23 +701,25 @@ function reportSectionContent(section) {
       <div class="section-head"><div><h2>Guided discovery questions</h2><p class="help">Structured answers preserve evidence and can later be converted into approved narrative.</p></div></div>
       <div class="prompt-list">${prompts.map(p => { const r=answered.get(p.id); return `<article class="prompt-card"><div class="prompt-question"><span>${esc(p.question)}</span></div>${p.answer_type==='PHOTO'?`<button class="btn btn-ghost btn-small" data-action="section-upload-photo">Add photo to this section</button>`:`<textarea class="prompt-answer" data-prompt-id="${p.id}" data-response-version="${r?.version || ''}" placeholder="Capture the answer, facts, assumptions, and examples.">${esc(r?.narrative || '')}</textarea><div class="save-state" data-save-for="${p.id}"></div>`}</article>`; }).join('')}</div>
     </section>
-    <section class="card" id="findings"><div class="section-head"><div><h2>Findings</h2><p class="help">Facts and interpretations should remain traceable to the section evidence.</p></div><button class="btn btn-ghost btn-small" data-action="new-finding">Add detailed finding</button></div>${findings.map(f => `<article class="finding"><div class="card-meta"><span class="badge">${esc(f.finding_type.replaceAll('_',' '))}</span><span>Confidence: ${esc(f.confidence)}</span></div><p>${esc(f.statement)}</p>${f.impact?`<p class="impact"><strong>Impact:</strong> ${esc(f.impact)}</p>`:''}</article>`).join('') || '<p class="help">No findings have been captured for this section.</p>'}</section>
+    <section class="card" id="findings"><div class="section-head"><div><h2>Findings</h2><p class="help">Use a formal finding when you want to classify an Observation, Pain Point, Risk, Gap, Strength, or Opportunity. General current-operations notes and guided responses are automatically treated as <strong>Observations</strong> when assessing Cloud Inventory functionality; they do not need to be duplicated here.</p></div><button class="btn btn-ghost btn-small" data-action="new-finding">Add detailed finding</button></div>${findings.map(f => `<article class="finding"><div class="card-meta"><span class="badge">${esc(f.finding_type.replaceAll('_',' '))}</span><span>Confidence: ${esc(f.confidence)}</span></div><p>${esc(f.statement)}</p>${f.impact?`<p class="impact"><strong>Impact:</strong> ${esc(f.impact)}</p>`:''}</article>`).join('') || '<p class="help">No specifically classified findings have been captured for this section.</p>'}${generalObservations.length?`<div class="general-observation-summary"><strong>${generalObservations.length} general note${generalObservations.length===1?'':'s'} available as Observations for functionality mapping</strong><ul>${generalObservations.slice(0,6).map(item=>`<li>${esc(item.label.replace('Observation — ',''))}: ${esc(item.statement.slice(0,180))}${item.statement.length>180?'…':''}</li>`).join('')}</ul></div>`:''}</section>
+    ${section.process_module ? `<section class="card" id="cloud-inventory-approach"><div class="section-head"><div><h2>Cloud Inventory Approach</h2><p class="help">Explain how approved Cloud Inventory capabilities can support the operation observed in this section. AI generation uses approved product references and approved historical knowledge only.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="generate-solution-approach" ${solutionEnabled?'':'disabled'} title="${esc(solutionEnabled ? 'Generate a source-grounded Cloud Inventory approach' : (state.aiStatus?.policy?.reason || (!approvedCapabilityCount ? 'No approved Cloud Inventory capabilities are available.' : 'Enter operational observations before generating an approach.')))}">${approach?.text ? 'Regenerate with AI' : 'Generate with AI'}</button><button class="btn btn-ghost btn-small" data-action="solution-version-history">Version history</button><button class="btn btn-ghost btn-small" data-action="map-capability" ${sectionObservationSources(section).length?'':'disabled'}>Map approved capability</button></div></div>${approach?.text?`<div class="compiled-narrative solution-approach-text">${esc(approach.text).replaceAll('\n','<br>')}</div><div class="card-meta"><span class="badge badge-success">ACCEPTED</span><span>Version ${esc(approach.version)}</span><span>${esc(fmtDateTime(approach.created_at))}</span></div>`:'<div class="empty-inline"><p>No Cloud Inventory approach has been accepted for this operational area yet.</p></div>'}${approvedMappings.length?`<div class="solution-mapping-summary"><strong>Approved functionality mappings</strong>${approvedMappings.map(item=>`<div class="finding"><div class="card-meta"><span class="badge badge-success">${esc(item.capability_code)}</span><span>${esc(item.source_label || 'Operational observation')}</span></div><strong>${esc(item.capability_name)}</strong><p>${esc(item.rationale)}</p></div>`).join('')}</div>`:''}</section>` : ''}
     <section class="card" id="photos"><div class="section-head"><div><h2>Site photographs and attachments</h2><p class="help">Upload photographs directly to this operational section. Evidence routed from Quick Entry also appears here for review, AI enhancement, and publication.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="section-upload-photo">Add photographs</button><button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button></div></div><div class="evidence-grid">${evidence.map(e => `<article class="evidence-card"><div class="evidence-thumb">${e.file?.mime_type?.startsWith('image/')?`<img src="/api/files/${e.file.id}?inline=true" alt="${esc(e.caption || e.file.file_name)}" loading="lazy">`:'Attachment'}</div><div class="evidence-body"><strong>${esc(e.caption || e.file?.file_name || 'Evidence')}</strong><div class="card-meta"><span>${esc(e.placement)}</span><span>${e.file?bytes(e.file.size_bytes):''}</span><span class="badge">${esc(e.extraction_state || 'NOT APPLICABLE')}</span></div>${e.file?`<a href="/api/files/${e.file.id}" target="_blank">Open file</a>`:''}${canReview(report.access_scope)?`<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="true">Include</button><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="false">Supporting only</button></div>`:''}</div></article>`).join('') || '<p class="help">No site photographs have been added to this section yet.</p>'}</div></section>`;
 }
 
 function reportInspector(section) {
   const report = state.report;
   const findings = report.findings.filter(f => f.section_id === section.id);
-  const mappings = report.capability_mappings.filter(m => findings.some(f => f.id === m.finding_id));
+  const observationSources = sectionObservationSources(section);
+  const mappings = report.capability_mappings.filter(m => m.section_id === section.id || findings.some(f => f.id === m.finding_id));
   const benefits = report.benefits.filter(b => !b.finding_id || findings.some(f=>f.id===b.finding_id));
   const suggestions = report.ai_suggestions.filter(s => !s.section_id || s.section_id === section.id);
   const comments = (report.comments || []).filter(c => !c.section_id || c.section_id === section.id);
   const canR = canReview(report.access_scope);
   return `
     <aside class="report-inspector">
-      <section class="inspector-card"><h3>Cloud Inventory functionality</h3>${findings.length?`<button class="btn btn-ghost btn-small btn-wide" data-action="map-capability">Map approved capability</button>`:'<p class="help">Capture a finding before mapping functionality.</p>'}${mappings.map(m=>`<div class="finding"><strong>${esc(m.capability_name)}</strong><p>${esc(m.rationale)}</p><span class="badge ${m.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(m.approval_state)}</span>${canR&&m.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
+      <section class="inspector-card"><h3>Cloud Inventory functionality</h3>${observationSources.length?`<button class="btn btn-ghost btn-small btn-wide" data-action="map-capability">Map approved capability</button><p class="help">Formal findings and general notes are both available as mapping sources. Unclassified general notes are treated as Observations.</p>`:'<p class="help">Capture a current-operations note, guided response, or finding before mapping functionality.</p>'}${mappings.map(m=>`<div class="finding"><div class="card-meta"><span>${esc(m.source_label || 'Operational source')}</span><span class="badge ${m.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(m.approval_state)}</span></div><strong>${esc(m.capability_name)}</strong><p>${esc(m.rationale)}</p>${m.source_statement?`<p class="help"><strong>Mapped from:</strong> ${esc(m.source_statement)}</p>`:''}${canR&&m.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
       <section class="inspector-card"><h3>Benefits and baselines</h3><button class="btn btn-ghost btn-small btn-wide" data-action="new-benefit">Add benefit statement</button>${benefits.map(b=>`<div class="finding"><p>${esc(b.statement)}</p><div class="card-meta"><span>${esc(b.measure_type)}</span><span class="badge ${b.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(b.approval_state)}</span></div>${canR&&b.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
-      <section class="inspector-card"><h3>AI enhancement</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p><p class="help">Use <strong>AI Enhance</strong> in the section header to compare the original observations with a source-grounded customer-facing draft.</p>${suggestions.filter(s=>s.purpose==='OBSERVATION_ENHANCEMENT').slice(0,3).map(s=>`<div class="finding"><div class="card-meta"><span>${esc(fmtDateTime(s.created_at))}</span><span class="badge ${s.review_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(s.review_state)}</span></div><p>${esc((s.content.enhanced_text || '').slice(0,220))}${(s.content.enhanced_text || '').length>220?'…':''}</p></div>`).join('')}</section>
+      <section class="inspector-card"><h3>AI assistance</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p>${suggestions.filter(s=>['OBSERVATION_ENHANCEMENT','SOLUTION_APPROACH'].includes(s.purpose)).slice(0,5).map(s=>`<div class="finding"><div class="card-meta"><span>${s.purpose==='SOLUTION_APPROACH'?'Cloud Inventory approach':'Observation enhancement'}</span><span>${esc(fmtDateTime(s.created_at))}</span><span class="badge ${s.review_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(s.review_state)}</span></div><p>${esc(((s.content.solution_text || s.content.enhanced_text || '')).slice(0,220))}${(s.content.solution_text || s.content.enhanced_text || '').length>220?'…':''}</p></div>`).join('')}</section>
       <section class="inspector-card"><h3>Collaboration comments</h3><form id="comment-form"><input type="hidden" name="section_id" value="${section.id}"><div class="field"><label class="sr-only">Comment</label><textarea name="body" required placeholder="Add a review note, question, or follow-up request."></textarea></div><button class="btn btn-ghost btn-small btn-wide" type="submit">Add comment</button></form>${comments.map(c=>`<div class="finding"><div class="card-meta"><strong>${esc(c.author_name)}</strong><span>${fmtDate(c.created_at)}</span></div><p>${esc(c.body)}</p><span class="badge ${c.status==='RESOLVED'?'badge-success':'badge-warning'}">${esc(c.status)}</span>${canR&&c.status==='OPEN'?`<button class="btn btn-ghost btn-small" data-action="resolve-comment" data-id="${c.id}">Resolve</button>`:''}</div>`).join('') || '<p class="help">No comments for this section.</p>'}</section>
     </aside>`;
 }
@@ -617,7 +730,8 @@ function reportSectionHasContent(section) {
     section.narrative?.trim() ||
     section.responses?.some(response => (response.narrative || '').trim() || response.payload) ||
     report.findings.some(item => item.section_id === section.id && item.status !== 'REJECTED') ||
-    report.evidence.some(item => item.section_id === section.id && ['READY','AVAILABLE'].includes(item.status))
+    report.evidence.some(item => item.section_id === section.id && ['READY','AVAILABLE'].includes(item.status)) ||
+    Boolean(section.cloud_inventory_approach?.text?.trim())
   );
 }
 
@@ -626,7 +740,8 @@ function reportPreviewSection(section) {
   const responses = (section.responses || []).filter(response => (response.narrative || '').trim() || response.payload);
   const findings = report.findings.filter(item => item.section_id === section.id && item.status !== 'REJECTED');
   const findingIds = new Set(findings.map(item => item.id));
-  const mappings = report.capability_mappings.filter(item => findingIds.has(item.finding_id) && item.approval_state === 'APPROVED');
+  const mappings = report.capability_mappings.filter(item => (item.section_id === section.id || findingIds.has(item.finding_id)) && item.approval_state === 'APPROVED');
+  const approach = section.cloud_inventory_approach?.text || '';
   const benefits = report.benefits.filter(item => item.approval_state === 'APPROVED' && (!item.finding_id || findingIds.has(item.finding_id)));
   const evidence = report.evidence.filter(item => item.section_id === section.id && ['READY','AVAILABLE'].includes(item.status) && item.placement === 'INLINE');
   const noContent = !reportSectionHasContent(section);
@@ -635,7 +750,8 @@ function reportPreviewSection(section) {
     ${section.narrative?.trim()?`<div class="compiled-narrative">${esc(section.narrative).replaceAll('\n','<br>')}</div>`:''}
     ${responses.length?`<h3>Discovery Responses</h3>${responses.map(response=>`<div class="compiled-response"><strong>${esc(response.question)}</strong><p>${esc(response.narrative || JSON.stringify(response.payload || {}))}</p></div>`).join('')}`:''}
     ${findings.length?`<h3>Current-State Findings</h3><ul>${findings.map(item=>`<li><strong>${esc(item.finding_type.replaceAll('_',' '))}:</strong> ${esc(item.statement)}${item.impact?`<div class="help"><strong>Impact:</strong> ${esc(item.impact)}</div>`:''}</li>`).join('')}</ul>`:''}
-    ${mappings.length?`<h3>Cloud Inventory Functionality</h3><ul>${mappings.map(item=>`<li><strong>${esc(item.capability_name)}:</strong> ${esc(item.rationale)}</li>`).join('')}</ul>`:''}
+    ${approach?`<h3>Cloud Inventory Approach</h3><div class="compiled-narrative">${esc(approach).replaceAll('\n','<br>')}</div>`:''}
+    ${mappings.length?`<h3>Mapped Cloud Inventory Functionality</h3><ul>${mappings.map(item=>`<li><strong>${esc(item.capability_name)}:</strong> ${esc(item.rationale)}${item.source_label?`<div class="help"><strong>Mapped from:</strong> ${esc(item.source_label)}</div>`:''}</li>`).join('')}</ul>`:''}
     ${benefits.length?`<h3>Benefits</h3><ul>${benefits.map(item=>`<li>${esc(item.statement)}</li>`).join('')}</ul>`:''}
     ${evidence.length?`<h3>Site Photographs and Evidence</h3><div class="compiled-evidence">${evidence.map(item=>`<div>${item.file?.mime_type?.startsWith('image/')?`<img src="/api/files/${item.file.id}?inline=true" alt="${esc(item.caption || item.file.file_name)}" loading="lazy">`:''}<p>${esc(item.caption || item.file?.file_name || 'Evidence')}</p></div>`).join('')}</div>`:''}
     ${noContent?'<p class="help">This section is marked complete but contains no reportable content.</p>':''}
@@ -772,10 +888,13 @@ function showRemoveSection() {
 }
 function showMapCapability() {
   const section = selectedSection();
-  const findings = state.report.findings.filter(f=>f.section_id===section.id);
+  const sources = sectionObservationSources(section);
+  if (!sources.length) { toast('Capture a current-operations note, guided response, or finding before mapping functionality.', 'error'); return; }
   const options = state.capabilities.filter(c=>c.status==='APPROVED').map(c=>`<option value="${c.id}">${esc(c.domain)} - ${esc(c.name)}</option>`).join('');
-  showModal('Map Cloud Inventory functionality', `<form id="mapping-form"><div class="field"><label>Finding</label><select name="finding_id">${findings.map(f=>`<option value="${f.id}">${esc(f.finding_type)} - ${esc(f.statement.slice(0,90))}</option>`).join('')}</select></div><div class="field"><label>Approved capability</label><select name="capability_id">${options}</select></div><div class="field"><label>Rationale</label><textarea name="rationale" required placeholder="Explain how this capability addresses the specific evidence and pain point."></textarea></div><div class="field"><label>Prerequisites</label><textarea name="prerequisites"></textarea></div><button class="btn btn-primary btn-wide" type="submit">Create mapping for review</button></form>`, '');
+  if (!options) { toast('No approved Cloud Inventory capabilities are available.', 'error'); return; }
+  showModal('Map Cloud Inventory functionality', `<form id="mapping-form"><input type="hidden" name="section_id" value="${section.id}"><div class="field"><label>Operational observation or finding</label><select name="source_ref">${sources.map(item=>`<option value="${esc(item.ref)}">${esc(item.type.replaceAll('_',' '))} - ${esc(item.statement.slice(0,110))}</option>`).join('')}</select><small>General notes and guided responses are treated as Observations for mapping; their original wording and classification are not changed.</small></div><div class="field"><label>Approved capability</label><select name="capability_id">${options}</select></div><div class="field"><label>Rationale</label><textarea name="rationale" required placeholder="Explain how this approved capability supports the selected observation, finding, or operational need."></textarea></div><div class="field"><label>Prerequisites</label><textarea name="prerequisites"></textarea></div><button class="btn btn-primary btn-wide" type="submit">Create mapping for review</button></form>`, '');
 }
+
 function showBenefit() {
   const section = selectedSection();
   const findings = state.report.findings.filter(f=>f.section_id===section.id);
@@ -791,10 +910,10 @@ async function showMergeReports() {
 async function renderAdmin() {
   setLoading();
   if (!hasRole('ADMIN')) { location.hash='#/prospects'; return; }
-  const [users, branding, capabilities, knowledge, retention, audit] = await Promise.all([api('/api/users'), api('/api/admin/branding'), api('/api/capabilities'), api('/api/admin/knowledge'), api('/api/admin/retention-due?days=90'), api('/api/admin/audit?limit=100')]);
+  const [users, branding, capabilities, knowledge, prospects, retention, audit] = await Promise.all([api('/api/users'), api('/api/admin/branding'), api('/api/capabilities'), api('/api/admin/knowledge'), api('/api/prospects'), api('/api/admin/retention-due?days=90'), api('/api/admin/audit?limit=100')]);
   state.users=users; state.capabilities=capabilities;
   app.innerHTML = shell(`<div class="page"><header class="page-header"><div><h1>Administration</h1><p>Users, capability governance, knowledge review, branding, retention, and audit.</p></div></header><nav class="tabs"><button class="tab active" data-action="admin-tab" data-tab="users">Users</button><button class="tab" data-action="admin-tab" data-tab="capabilities">Capabilities</button><button class="tab" data-action="admin-tab" data-tab="knowledge">Knowledge</button><button class="tab" data-action="admin-tab" data-tab="retention">Retention</button><button class="tab" data-action="admin-tab" data-tab="branding">Branding</button><button class="tab" data-action="admin-tab" data-tab="audit">Audit</button></nav><div id="admin-panel"></div></div>`, 'admin');
-  window.__adminData={users,branding,capabilities,knowledge,retention,audit};
+  window.__adminData={users,branding,capabilities,knowledge,prospects,retention,audit};
   renderAdminTab('users'); updateConnection();
 }
 function renderAdminTab(tab) {
@@ -802,7 +921,7 @@ function renderAdminTab(tab) {
   document.querySelectorAll('[data-action="admin-tab"]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));
   if(tab==='users') panel.innerHTML=`<div class="page-header"><div><h2>Users</h2><p>Application-managed identities and global roles.</p></div><button class="btn btn-primary" data-action="new-user">Create user</button></div><div class="table-wrap"><table><thead><tr><th>User</th><th>Email</th><th>Roles</th><th>Status</th></tr></thead><tbody>${data.users.map(u=>`<tr><td>${esc(u.display_name||u.username)}<br><span class="help">${esc(u.username)}</span></td><td>${esc(u.email)}</td><td>${u.roles.map(r=>`<span class="badge">${esc(r)}</span>`).join(' ')}</td><td>${esc(u.status)}</td></tr>`).join('')}</tbody></table></div>`;
   if(tab==='capabilities') panel.innerHTML=`<div class="page-header"><div><h2>Controlled capability catalog</h2><p>Only approved capabilities are available for prospect recommendations and AI grounding.</p></div><button class="btn btn-primary" data-action="new-capability">Add capability</button></div><div class="table-wrap"><table><thead><tr><th>Code</th><th>Domain</th><th>Capability</th><th>Status</th><th>Source / action</th></tr></thead><tbody>${data.capabilities.map(c=>`<tr><td>${esc(c.capability_code)}</td><td>${esc(c.domain)}</td><td><strong>${esc(c.name)}</strong><br><span class="help">${esc(c.controlled_description)}</span></td><td><span class="badge ${c.status==='APPROVED'?'badge-success':c.status==='RETIRED'?'badge-danger':'badge-warning'}">${esc(c.status)}</span></td><td>${esc(c.source||'')}${c.status==='PROPOSED'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-capability" data-id="${c.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-capability" data-id="${c.id}" data-decision="REJECTED">Retire</button></div>`:''}</td></tr>`).join('')}</tbody></table></div>`;
-  if(tab==='knowledge') panel.innerHTML=`<div class="page-header"><div><h2>Discovery knowledge repository</h2><p>Approved reusable knowledge can ground future AI drafts. Prospect-specific entries remain isolated until explicitly de-identified.</p></div></div><div class="table-wrap"><table><thead><tr><th>Source</th><th>Title / content</th><th>Scope</th><th>Status</th><th>Review</th></tr></thead><tbody>${data.knowledge.map(k=>`<tr><td>${esc(k.source_type)}<br><span class="help">${esc(k.source_ref||'')}</span></td><td><strong>${esc(k.title)}</strong><br><span class="help">${esc(k.content.slice(0,320))}${k.content.length>320?'…':''}</span></td><td>${k.prospect_id?'<span class="badge badge-warning">Prospect specific</span>':'<span class="badge badge-cyan">Shared internal</span>'}${k.reusable_across_prospects?'<span class="badge badge-success">Reusable</span>':''}</td><td><span class="badge ${k.approval_state==='APPROVED'?'badge-success':k.approval_state==='REJECTED'?'badge-danger':'badge-warning'}">${esc(k.approval_state)}</span></td><td>${k.approval_state==='PENDING'?`<button class="btn btn-primary btn-small" data-action="review-knowledge" data-id="${k.id}" data-decision="APPROVED">Approve isolated</button><button class="btn btn-danger btn-small" data-action="review-knowledge" data-id="${k.id}" data-decision="REJECTED">Reject</button>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+  if(tab==='knowledge') panel.innerHTML=`<div class="page-header"><div><h2>Discovery knowledge repository</h2><p>Only approved knowledge can ground Cloud Inventory solution wording. Prospect-specific content remains isolated until an administrator explicitly de-identifies and promotes it for reuse.</p></div><div class="toolbar"><button class="btn btn-primary" data-action="new-knowledge">Add knowledge</button><button class="btn btn-secondary" data-action="import-knowledge">Import historical document</button></div></div><div class="table-wrap"><table><thead><tr><th>Source</th><th>Title / content</th><th>Area / capability</th><th>Scope</th><th>Status</th><th>Review</th></tr></thead><tbody>${data.knowledge.map(k=>{const cap=data.capabilities.find(c=>c.id===k.capability_id);return `<tr><td>${esc(k.source_type)}<br><span class="help">${esc(k.source_ref||'')}</span></td><td><strong>${esc(k.title)}</strong><br><span class="help">${esc(k.content.slice(0,320))}${k.content.length>320?'…':''}</span></td><td>${esc(k.process_module||'General')}${cap?`<br><span class="badge badge-cyan">${esc(cap.capability_code)}</span>`:''}</td><td>${k.prospect_id?'<span class="badge badge-warning">Prospect specific</span>':'<span class="badge badge-cyan">Shared internal</span>'}${k.reusable_across_prospects?'<span class="badge badge-success">Reusable</span>':''}</td><td><span class="badge ${k.approval_state==='APPROVED'?'badge-success':k.approval_state==='REJECTED'?'badge-danger':'badge-warning'}">${esc(k.approval_state)}</span></td><td><button class="btn btn-ghost btn-small" data-action="review-knowledge-detail" data-id="${k.id}">Review / edit</button>${k.approval_state==='PENDING'?`<button class="btn btn-primary btn-small" data-action="review-knowledge" data-id="${k.id}" data-decision="APPROVED">Approve isolated</button><button class="btn btn-danger btn-small" data-action="review-knowledge" data-id="${k.id}" data-decision="REJECTED">Reject</button>`:''}</td></tr>`;}).join('')}</tbody></table></div>`;
   if(tab==='retention') panel.innerHTML=`<div class="page-header"><div><h2>Retention review</h2><p>Export is mandatory before permanent prospect deletion. Legal holds block archival and deletion.</p></div></div><div class="table-wrap"><table><thead><tr><th>Prospect</th><th>Status</th><th>Due</th><th>Last export</th><th>Actions</th></tr></thead><tbody>${data.retention.map(p=>`<tr><td><strong>${esc(p.name)}</strong>${p.legal_hold?'<br><span class="badge badge-danger">Legal hold</span>':''}</td><td>${esc(p.status)}</td><td>${fmtDate(p.retention_due_at)}</td><td>${fmtDate(p.last_exported_at)}</td><td><a class="btn btn-ghost btn-small" href="/api/prospects/${p.id}/export">Export</a>${p.last_exported_at&&!p.legal_hold?`<button class="btn btn-danger btn-small" data-action="delete-prospect" data-id="${p.id}" data-name="${esc(p.name)}">Delete</button>`:''}</td></tr>`).join('')||'<tr><td colspan="5">No prospects are due within the selected window.</td></tr>'}</tbody></table></div>`;
   if(tab==='branding') { const b=data.branding; panel.innerHTML=`<div class="card"><h2>Default Denver-derived branding</h2><form id="branding-form"><div class="grid grid-3"><div class="field"><label>Primary color</label><input name="primary_color" type="color" value="${esc(b.primary_color)}"></div><div class="field"><label>Secondary color</label><input name="secondary_color" type="color" value="${esc(b.secondary_color)}"></div><div class="field"><label>Accent color</label><input name="accent_color" type="color" value="${esc(b.accent_color)}"></div></div><div class="grid grid-2"><div class="field"><label>Heading font</label><input name="heading_font" value="${esc(b.heading_font)}"></div><div class="field"><label>Body font</label><input name="body_font" value="${esc(b.body_font)}"></div></div><div class="field"><label>Confidentiality statement</label><textarea name="confidentiality_text">${esc(b.confidentiality_text)}</textarea></div><div class="grid grid-2"><div class="field"><label>Draft watermark</label><input name="draft_watermark" value="${esc(b.draft_watermark)}"></div><div class="field"><label>Footer</label><input name="footer_text" value="${esc(b.footer_text)}"></div></div><input type="hidden" name="brand_id" value="${b.id}"><button class="btn btn-primary" type="submit">Save branding</button></form></div><div class="card"><h2>Report logo</h2><p class="help">${b.has_custom_logo?'A custom logo is active. Uploading a new image replaces it.':'The standard Cloud Inventory logo is active.'}</p><form id="branding-logo-form"><input type="hidden" name="brand_id" value="${b.id}"><div class="field"><label>Logo image</label><input name="file" type="file" accept="image/png,image/jpeg,image/webp" required></div><button class="btn btn-primary" type="submit">Upload report logo</button></form></div>`; }
   if(tab==='audit') panel.innerHTML=`<div class="table-wrap"><table><thead><tr><th>When</th><th>Action</th><th>Target</th><th>Actor</th><th>Metadata</th></tr></thead><tbody>${data.audit.map(a=>`<tr><td>${fmtDate(a.created_at)}</td><td>${esc(a.action)}</td><td>${esc(a.target_type)}<br><span class="help">${esc(a.target_id||'')}</span></td><td>${esc(a.actor_user_id||'System')}</td><td><code>${esc(JSON.stringify(a.metadata))}</code></td></tr>`).join('')}</tbody></table></div>`;
@@ -823,6 +942,55 @@ function showSectionPhotoUpload(section) {
 function showDeleteProspect(id,name){showModal('Permanently delete prospect',`<p>This action permanently deletes the prospect workspace, reports, evidence, publications, and audit-linked customer data. A completed export is required.</p><form id="delete-prospect-form"><input type="hidden" name="prospect_id" value="${esc(id)}"><div class="field"><label>Type the prospect name to confirm</label><input name="confirm_name" required></div><label><input type="checkbox" name="confirm_exported" required> I confirm that the workspace export has been downloaded and retained.</label><button class="btn btn-danger btn-wide" type="submit">Permanently delete ${esc(name)}</button></form>`,'');}
 function showNewUser(){showModal('Create user',`<form id="user-form"><div class="field"><label>Username</label><input name="username" required></div><div class="field"><label>Display name</label><input name="display_name"></div><div class="field"><label>Email</label><input name="email" type="email" required></div><div class="field"><label>Temporary password</label><input name="password" type="password" minlength="14" required></div><div class="field"><label>Roles</label><label><input type="checkbox" name="roles" value="CONTRIBUTOR" checked> Contributor</label><label><input type="checkbox" name="roles" value="REVIEWER"> Reviewer</label><label><input type="checkbox" name="roles" value="OWNER"> Owner</label><label><input type="checkbox" name="roles" value="ADMIN"> Administrator</label></div><button class="btn btn-primary btn-wide" type="submit">Create user</button></form>`,'');}
 function showNewCapability(){showModal('Add controlled capability',`<form id="capability-form"><div class="grid grid-2"><div class="field"><label>Code</label><input name="capability_code" required></div><div class="field"><label>Domain</label><input name="domain" required></div></div><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Controlled description</label><textarea name="controlled_description" required></textarea></div><div class="field"><label>Typical prerequisites</label><textarea name="typical_prerequisites"></textarea></div><div class="field"><label>Limitations</label><textarea name="limitations"></textarea></div><div class="field"><label>Status</label><select name="status"><option>PROPOSED</option><option>APPROVED</option></select></div><div class="field"><label>Source</label><input name="source"></div><button class="btn btn-primary btn-wide" type="submit">Add capability</button></form>`,'');}
+
+
+function knowledgeModuleOptions(selected='') {
+  const values = [...QUICK_ENTRY_AREAS.filter(item=>item.value!=='OTHER'), {value:'MANUFACTURING',label:'Manufacturing'}, {value:'FIELD_INVENTORY',label:'Field Inventory'}];
+  const unique = [...new Map(values.map(item=>[item.value,item])).values()];
+  return `<option value="" ${!selected?'selected':''}>General / cross-process</option>${unique.map(item=>`<option value="${item.value}" ${item.value===selected?'selected':''}>${esc(item.label)}</option>`).join('')}`;
+}
+
+function showNewKnowledge() {
+  const data=window.__adminData;
+  const capabilities=data.capabilities.filter(item=>item.status==='APPROVED');
+  showModal('Add controlled knowledge', `<form id="knowledge-form">
+    <div class="grid grid-2"><div class="field"><label>Source type</label><input name="source_type" value="INTERNAL_REFERENCE" required></div><div class="field"><label>Source reference</label><input name="source_ref" placeholder="Document, template, or source identifier"></div></div>
+    <div class="field"><label>Title</label><input name="title" required></div>
+    <div class="grid grid-2"><div class="field"><label>Operational area</label><select name="process_module">${knowledgeModuleOptions()}</select></div><div class="field"><label>Linked approved capability</label><select name="capability_id"><option value="">None</option>${capabilities.map(c=>`<option value="${c.id}">${esc(c.capability_code)} — ${esc(c.name)}</option>`).join('')}</select></div></div>
+    <div class="field"><label>Knowledge content</label><textarea name="content" required placeholder="Approved wording, operational explanation, prerequisites, limitations, or reusable implementation guidance."></textarea></div>
+    <div class="grid grid-2"><div class="field"><label>Prospect scope</label><select name="prospect_id"><option value="">Shared internal candidate</option>${data.prospects.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div class="field"><label>Classification</label><select name="classification"><option>INTERNAL</option><option>CONFIDENTIAL</option><option>PUBLIC</option></select></div></div>
+    <label><input type="checkbox" name="reusable_across_prospects"> Mark as reusable across prospects</label><p class="help">Prospect-specific content cannot become reusable until it is reviewed and explicitly de-identified.</p>
+    <button class="btn btn-primary btn-wide" type="submit">Create pending knowledge entry</button>
+  </form>`, '');
+}
+
+function showImportKnowledge() {
+  const data=window.__adminData;
+  const capabilities=data.capabilities.filter(item=>item.status==='APPROVED');
+  showModal('Import historical knowledge document', `<p>Supported documents are converted to controlled text chunks and placed in <strong>Pending</strong> status. Imported content cannot ground AI output until it is reviewed and approved.</p><form id="knowledge-import-form">
+    <div class="field"><label>Knowledge source title</label><input name="title" required placeholder="For example: Approved Warehouse Discovery Report Template"></div>
+    <div class="grid grid-2"><div class="field"><label>Operational area</label><select name="process_module">${knowledgeModuleOptions()}</select></div><div class="field"><label>Linked approved capability</label><select name="capability_id"><option value="">None / multiple capabilities</option>${capabilities.map(c=>`<option value="${c.id}">${esc(c.capability_code)} — ${esc(c.name)}</option>`).join('')}</select></div></div>
+    <div class="field"><label>Source scope</label><select name="prospect_id"><option value="">Shared internal reference candidate</option>${data.prospects.map(p=>`<option value="${p.id}">Prospect-specific — ${esc(p.name)}</option>`).join('')}</select><small>Select the original prospect when importing a customer-specific historical report. It will remain isolated until de-identified.</small></div>
+    <div class="field"><label>Historical document</label><input name="file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.xlsm,.json,.xml" required></div>
+    <button class="btn btn-primary btn-wide" type="submit">Import for review</button>
+  </form>`, '');
+}
+
+function showReviewKnowledge(entryId) {
+  const data=window.__adminData;
+  const item=data.knowledge.find(k=>k.id===entryId);
+  if(!item){toast('Knowledge entry not found.','error');return;}
+  const prospect=data.prospects.find(p=>p.id===item.prospect_id);
+  showModal('Review controlled knowledge', `<form id="knowledge-review-form"><input type="hidden" name="entry_id" value="${item.id}">
+    <div class="field"><label>Title</label><input name="title" value="${esc(item.title)}" required></div>
+    <div class="field"><label>Controlled content</label><textarea name="content" required>${esc(item.content)}</textarea></div>
+    ${prospect?`<div class="validation-item WARNING">This entry originated from <strong>${esc(prospect.name)}</strong>. To reuse it across prospects, remove customer-identifying and customer-specific information before selecting reusable.</div>`:''}
+    <label><input type="checkbox" name="reusable_across_prospects" ${item.reusable_across_prospects?'checked':''}> Approved for reuse across prospects</label>
+    <div class="field"><label>Decision</label><select name="decision"><option value="APPROVED" ${item.approval_state==='APPROVED'?'selected':''}>APPROVED</option><option value="REJECTED" ${item.approval_state==='REJECTED'?'selected':''}>REJECTED</option></select></div>
+    <div class="field"><label>Review note</label><textarea name="note" placeholder="Record de-identification or approval rationale."></textarea></div>
+    <button class="btn btn-primary btn-wide" type="submit">Save knowledge review</button>
+  </form>`, '');
+}
 
 function formObject(form, checkboxes = []) {
   const fd = new FormData(form); const obj={};
@@ -980,6 +1148,9 @@ async function handleSubmit(event) {
     if(form.id==='delete-prospect-form'){const o=formObject(form);const id=o.prospect_id;delete o.prospect_id;await api(`/api/admin/prospects/${id}`,{method:'DELETE',body:o},false);closeModal();toast('Prospect permanently deleted.','success');renderAdmin();return;}
     if(form.id==='user-form'){const o=formObject(form,['roles']);await api('/api/admin/users',{method:'POST',body:o});closeModal();toast('User created.','success');renderAdmin();return;}
     if(form.id==='capability-form'){await api('/api/admin/capabilities',{method:'POST',body:formObject(form)});closeModal();toast('Capability added.','success');renderAdmin();return;}
+    if(form.id==='knowledge-form'){const o=formObject(form);o.process_module=o.process_module||null;o.capability_id=o.capability_id||null;o.prospect_id=o.prospect_id||null;if(o.prospect_id&&o.reusable_across_prospects)throw new Error('Prospect-specific knowledge must be de-identified during review before it can be reusable.');await api('/api/admin/knowledge',{method:'POST',body:o});closeModal();toast('Knowledge entry created for review.','success');renderAdmin();return;}
+    if(form.id==='knowledge-import-form'){const fd=new FormData(form);const result=await api('/api/admin/knowledge/import',{method:'POST',body:fd},false);closeModal();toast(result.message||`${result.created} knowledge entries imported for review.`,'success');renderAdmin();return;}
+    if(form.id==='knowledge-review-form'){const o=formObject(form);const id=o.entry_id;delete o.entry_id;await api(`/api/admin/knowledge/${id}/review`,{method:'POST',body:o});closeModal();toast('Knowledge review saved.','success');renderAdmin();return;}
     if(form.id==='branding-form'){const o=formObject(form);const id=o.brand_id;delete o.brand_id;await api(`/api/admin/branding/${id}`,{method:'PATCH',body:o});toast('Branding updated.','success');renderAdmin();return;}
     if(form.id==='branding-logo-form'){const fd=new FormData(form);const id=fd.get('brand_id');fd.delete('brand_id');await api(`/api/admin/branding/${id}/logo`,{method:'POST',body:fd},false);toast('Report logo updated.','success');renderAdmin();return;}
   } catch(error){toast(error.message,'error');}
@@ -1023,9 +1194,13 @@ async function handleClick(event) {
     if(action==='resolve-comment'){await api(`/api/reports/${reportId}/comments/${target.dataset.id}/resolve`,{method:'POST'});renderReport(reportId,section.id);return;}
     if(action==='ai-enhance-observations'){await showAiEnhancement(section);return;}
     if(action==='section-version-history'){await showSectionContentHistory(section);return;}
+    if(action==='generate-solution-approach'){await showSolutionApproach(section);return;}
+    if(action==='solution-version-history'){await showSolutionContentHistory(section);return;}
     if(action==='speak-ai-text'){speakAiText();return;}
     if(action==='refine-ai-enhancement'){await requestAiEnhancement(section,target.dataset.suggestionId);return;}
     if(action==='accept-ai-enhancement'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted from AI observation enhancement comparison.'}},false);toast('AI-enhanced current-operations wording accepted. Original input has been retained in version history.','success');closeModal();await renderReport(reportId,section.id);return;}
+    if(action==='refine-solution-approach'){await requestSolutionApproach(section,target.dataset.suggestionId);return;}
+    if(action==='accept-solution-approach'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted from Cloud Inventory solution intelligence comparison.'}},false);toast('Cloud Inventory approach accepted and approved functionality mappings applied.','success');closeModal();await renderReport(reportId,section.id);return;}
     if(action==='request-ai'){const result=await api(`/api/reports/${reportId}/ai`,{method:'POST',body:{section_id:section.id,purpose:'NARRATIVE'}});toast(result.message||'AI draft queued for generation and human review.','success');renderReport(reportId,section.id);return;}
     if(action==='review-ai'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});renderReport(reportId,section.id);return;}
     if(action==='validate-draft'||action==='validate-final'){const final=action==='validate-final';state.validation=await api(`/api/reports/${reportId}/validate`,{method:'POST',body:{final_requested:final}});renderReport(reportId,screenId);return;}
@@ -1035,6 +1210,9 @@ async function handleClick(event) {
     if(action==='admin-tab'){renderAdminTab(target.dataset.tab);return;}
     if(action==='new-user'){showNewUser();return;}
     if(action==='new-capability'){showNewCapability();return;}
+    if(action==='new-knowledge'){showNewKnowledge();return;}
+    if(action==='import-knowledge'){showImportKnowledge();return;}
+    if(action==='review-knowledge-detail'){showReviewKnowledge(target.dataset.id);return;}
     if(action==='review-capability'){await api(`/api/admin/capabilities/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision}});toast('Capability review recorded.','success');renderAdmin();return;}
     if(action==='review-knowledge'){await api(`/api/admin/knowledge/${target.dataset.id}/review`,{method:'POST',body:{decision:target.dataset.decision,reusable_across_prospects:false}});toast('Knowledge review recorded.','success');renderAdmin();return;}
     if(action==='delete-prospect'){showDeleteProspect(target.dataset.id,target.dataset.name);return;}

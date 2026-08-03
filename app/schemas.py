@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -128,10 +128,18 @@ class MetricCreate(BaseModel):
 
 
 class CapabilityMappingCreate(BaseModel):
-    finding_id: str
+    finding_id: str | None = None
+    section_id: str | None = None
+    source_ref: str | None = Field(default=None, max_length=120)
     capability_id: str
     rationale: str = Field(min_length=1)
     prerequisites: str | None = None
+
+    @model_validator(mode="after")
+    def validate_mapping_source(self):
+        if not self.finding_id and not self.source_ref:
+            raise ValueError("A finding or operational observation source is required.")
+        return self
 
 
 class BenefitCreate(BaseModel):
@@ -173,6 +181,7 @@ class AiRequest(BaseModel):
         "EXECUTIVE_SUMMARY",
         "ATTACHMENT_REVIEW",
         "OBSERVATION_ENHANCEMENT",
+        "SOLUTION_APPROACH",
     ]
     instructions: str | None = Field(default=None, max_length=4000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)

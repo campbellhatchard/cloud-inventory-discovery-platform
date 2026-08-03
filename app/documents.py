@@ -36,6 +36,7 @@ from .models import (
     Report,
     ReportSection,
     Response,
+    SectionContentVersion,
     Site,
     User,
 )
@@ -445,6 +446,11 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
             select(Response.id).where(Response.section_id == section.id).limit(1),
             select(Finding.id).where(Finding.section_id == section.id, Finding.status != "REJECTED").limit(1),
             select(EvidenceItem.id).where(EvidenceItem.section_id == section.id, EvidenceItem.status.in_(["READY", "AVAILABLE"])).limit(1),
+            select(SectionContentVersion.id).where(
+                SectionContentVersion.section_id == section.id,
+                SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                SectionContentVersion.is_current.is_(True),
+            ).limit(1),
         ]
         return any(db.scalar(stmt) is not None for stmt in checks)
 
@@ -492,18 +498,40 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
                 if finding.impact:
                     doc.add_paragraph(f"Impact: {finding.impact}")
 
+        solution = db.scalar(
+            select(SectionContentVersion)
+            .where(
+                SectionContentVersion.report_id == report.id,
+                SectionContentVersion.section_id == section.id,
+                SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                SectionContentVersion.is_current.is_(True),
+            )
+            .order_by(SectionContentVersion.version.desc())
+        )
+        if solution and solution.text.strip():
+            doc.add_heading("Cloud Inventory Approach", level=2)
+            _add_text(doc, solution.text)
+
         mappings = db.execute(
-            select(CapabilityMapping, Capability, Finding)
+            select(CapabilityMapping, Capability)
             .join(Capability, CapabilityMapping.capability_id == Capability.id)
-            .join(Finding, CapabilityMapping.finding_id == Finding.id)
-            .where(CapabilityMapping.report_id == report.id, Finding.section_id == section.id, CapabilityMapping.approval_state == "APPROVED")
+            .where(
+                CapabilityMapping.report_id == report.id,
+                CapabilityMapping.section_id == section.id,
+                CapabilityMapping.approval_state == "APPROVED",
+            )
+            .order_by(Capability.name)
         ).all()
         if mappings:
-            doc.add_heading("Cloud Inventory Functionality", level=2)
-            for mapping, capability, finding in mappings:
+            doc.add_heading("Mapped Cloud Inventory Functionality", level=3 if solution and solution.text.strip() else 2)
+            for mapping, capability in mappings:
                 p = doc.add_paragraph(style="List Bullet")
                 p.add_run(capability.name + ": ").bold = True
                 p.add_run(mapping.rationale)
+                if mapping.source_label and mapping.source_statement:
+                    source_p = doc.add_paragraph()
+                    source_p.add_run(f"Mapped from {mapping.source_label}: ").bold = True
+                    source_p.add_run(mapping.source_statement)
                 if mapping.prerequisites or capability.typical_prerequisites:
                     doc.add_paragraph("Prerequisites: " + (mapping.prerequisites or capability.typical_prerequisites or ""))
                 if capability.limitations:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -19,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .access import accessible_prospect_ids, require_prospect_access, require_report_access
-from .ai_service import build_observation_snapshot, evaluate_policy
+from .ai_service import build_observation_snapshot, build_solution_snapshot, evaluate_policy
 from .audit import audit
 from .auth import (
     authenticate,
@@ -201,6 +202,103 @@ def _report_member_user_ids(db: Session, report: Report) -> set[str]:
     return ids
 
 
+
+def _resolve_mapping_source(
+    db: Session,
+    report: Report,
+    *,
+    section_id: str | None,
+    source_ref: str | None,
+    finding_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a finding or general note into a stable capability-mapping source."""
+    if finding_id:
+        finding = db.get(Finding, finding_id)
+        if not finding or finding.report_id != report.id:
+            raise HTTPException(400, "Invalid finding for this report.")
+        return {
+            "section_id": finding.section_id,
+            "finding_id": finding.id,
+            "source_ref": f"finding:{finding.id}",
+            "source_type": "FINDING",
+            "source_label": finding.finding_type.replace("_", " ").title(),
+            "source_statement": finding.statement,
+        }
+
+    ref = (source_ref or "").strip()
+    if not ref:
+        raise HTTPException(400, "A finding or operational observation source is required.")
+
+    if ref.startswith("finding:"):
+        return _resolve_mapping_source(db, report, section_id=section_id, source_ref=None, finding_id=ref.split(":", 1)[1])
+
+    if ref == "section:narrative":
+        if not section_id:
+            raise HTTPException(400, "Section is required for a general-note mapping.")
+        section = _get_section(db, section_id)
+        if section.report_id != report.id:
+            raise HTTPException(400, "Section does not belong to report.")
+        statement = section.narrative.strip()
+        if not statement:
+            raise HTTPException(400, "The section current-operations narrative is empty.")
+        return {
+            "section_id": section.id,
+            "finding_id": None,
+            "source_ref": ref,
+            "source_type": "GENERAL_OBSERVATION",
+            "source_label": "Observation — Current operations narrative",
+            "source_statement": statement,
+        }
+
+    if ref.startswith("response:"):
+        response = db.get(Response, ref.split(":", 1)[1])
+        if not response or response.report_id != report.id:
+            raise HTTPException(400, "Guided response is not available in this report.")
+        if section_id and response.section_id != section_id:
+            raise HTTPException(400, "Guided response does not belong to the selected section.")
+        prompt = db.get(PromptDefinition, response.prompt_id)
+        statement = response.narrative.strip() or (json.dumps(response.payload, ensure_ascii=False) if response.payload else "")
+        if not statement:
+            raise HTTPException(400, "The selected guided response is empty.")
+        return {
+            "section_id": response.section_id,
+            "finding_id": None,
+            "source_ref": ref,
+            "source_type": "GENERAL_OBSERVATION",
+            "source_label": f"Observation — {prompt.question if prompt else 'Guided response'}",
+            "source_statement": statement,
+        }
+
+    raise HTTPException(400, "Unsupported operational observation source.")
+
+
+def _knowledge_chunks(text: str, *, max_chars: int = 4200, max_chunks: int = 40) -> list[str]:
+    paragraphs = [item.strip() for item in text.replace("\r\n", "\n").split("\n\n") if item.strip()]
+    if not paragraphs:
+        paragraphs = [item.strip() for item in text.split("\n") if item.strip()]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in paragraphs:
+        if len(paragraph) > max_chars:
+            slices = [paragraph[index:index + max_chars] for index in range(0, len(paragraph), max_chars)]
+        else:
+            slices = [paragraph]
+        for piece in slices:
+            candidate = f"{current}\n\n{piece}".strip() if current else piece
+            if current and len(candidate) > max_chars:
+                chunks.append(current)
+                current = piece
+            else:
+                current = candidate
+            if len(chunks) >= max_chunks:
+                break
+        if len(chunks) >= max_chunks:
+            break
+    if current and len(chunks) < max_chunks:
+        chunks.append(current)
+    return chunks
+
+
 def _create_knowledge_candidates(db: Session, report: Report, actor: User) -> int:
     """Capture approved report knowledge without making it cross-prospect reusable.
 
@@ -209,18 +307,21 @@ def _create_knowledge_candidates(db: Session, report: Report, actor: User) -> in
     """
     created = 0
     mappings = db.execute(
-        select(CapabilityMapping, Capability, Finding)
+        select(CapabilityMapping, Capability)
         .join(Capability, CapabilityMapping.capability_id == Capability.id)
-        .join(Finding, CapabilityMapping.finding_id == Finding.id)
         .where(CapabilityMapping.report_id == report.id, CapabilityMapping.approval_state == "APPROVED")
     ).all()
-    for mapping, capability, finding in mappings:
+    for mapping, capability in mappings:
         source_ref = f"report:{report.id}:mapping:{mapping.id}"
         if db.scalar(select(KnowledgeEntry.id).where(KnowledgeEntry.source_ref == source_ref)):
             continue
+        impact = None
+        if mapping.finding_id:
+            finding = db.get(Finding, mapping.finding_id)
+            impact = finding.impact if finding else None
         content = (
-            f"Observed issue: {finding.statement}\n"
-            f"Impact: {finding.impact or 'Not stated'}\n"
+            f"Observed source ({mapping.source_label or mapping.source_type}): {mapping.source_statement or 'Not stated'}\n"
+            f"Impact: {impact or 'Not stated'}\n"
             f"Approved capability: {capability.name} ({capability.capability_code})\n"
             f"Approved rationale: {mapping.rationale}\n"
             f"Prerequisites: {mapping.prerequisites or capability.typical_prerequisites or 'Not stated'}"
@@ -739,6 +840,16 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     capabilities = db.execute(select(CapabilityMapping, Capability).join(Capability, CapabilityMapping.capability_id == Capability.id).where(CapabilityMapping.report_id == report.id)).all()
     benefits = list(db.scalars(select(Benefit).where(Benefit.report_id == report.id).order_by(Benefit.created_at)).all())
     suggestions = list(db.scalars(select(AiSuggestion).where(AiSuggestion.report_id == report.id).order_by(AiSuggestion.created_at.desc())).all())
+    solution_versions = list(
+        db.scalars(
+            select(SectionContentVersion).where(
+                SectionContentVersion.report_id == report.id,
+                SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                SectionContentVersion.is_current.is_(True),
+            )
+        ).all()
+    )
+    solution_by_section = {item.section_id: item for item in solution_versions}
     publications = list(
         db.scalars(
             select(Publication)
@@ -755,12 +866,30 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     return {
         "report": {"id": report.id, "prospect_id": report.prospect_id, "engagement_id": report.engagement_id, "site_id": report.site_id, "title": report.title, "report_kind": report.report_kind, "state": report.state, "revision": report.revision, "owner_id": report.owner_id, "updated_at": _iso(report.updated_at)},
         "access_scope": scope,
-        "sections": [{"id": s.id, "stable_key": s.stable_key, "title": s.title, "process_module": s.process_module, "display_order": s.display_order, "state": s.state, "required_on_final": s.required_on_final, "removed_reason": s.removed_reason, "narrative": s.narrative, "version": s.version, "responses": response_map.get(s.id, [])} for s in sections],
+        "sections": [{
+            "id": s.id, "stable_key": s.stable_key, "title": s.title, "process_module": s.process_module, "display_order": s.display_order,
+            "state": s.state, "required_on_final": s.required_on_final, "removed_reason": s.removed_reason, "narrative": s.narrative,
+            "version": s.version, "responses": response_map.get(s.id, []),
+            "cloud_inventory_approach": None if s.id not in solution_by_section else {
+                "id": solution_by_section[s.id].id,
+                "version": solution_by_section[s.id].version,
+                "text": solution_by_section[s.id].text,
+                "source_type": solution_by_section[s.id].source_type,
+                "source_refs": solution_by_section[s.id].source_refs,
+                "created_at": _iso(solution_by_section[s.id].created_at),
+            },
+        } for s in sections],
         "prompts_by_module": prompts_by_module,
         "findings": [{"id": f.id, "section_id": f.section_id, "finding_type": f.finding_type, "statement": f.statement, "impact": f.impact, "confidence": f.confidence, "status": f.status} for f in findings],
         "metrics": [{"id": m.id, "section_id": m.section_id, "name": m.name, "value_numeric": m.value_numeric, "value_text": m.value_text, "unit": m.unit, "period": m.period, "source": m.source, "confidence": m.confidence} for m in metrics],
         "evidence": [{"id": e.id, "section_id": e.section_id, "evidence_type": e.evidence_type, "caption": e.caption, "placement": e.placement, "classification": e.classification, "status": e.status, "extraction_state": e.extraction_state, "has_extracted_text": bool(e.extracted_text), "ai_inclusion_recommendation": e.ai_inclusion_recommendation, "file": {"id": f.id, "file_name": f.file_name, "mime_type": f.mime_type, "size_bytes": f.size_bytes, "variant": f.variant} if f else None} for e, f in evidence if not f or f.variant == "ORIGINAL"],
-        "capability_mappings": [{"id": m.id, "finding_id": m.finding_id, "capability_id": c.id, "capability_code": c.capability_code, "capability_name": c.name, "rationale": m.rationale, "prerequisites": m.prerequisites, "approval_state": m.approval_state} for m, c in capabilities],
+        "capability_mappings": [{
+            "id": m.id, "section_id": m.section_id, "finding_id": m.finding_id, "source_ref": m.source_ref,
+            "source_type": m.source_type, "source_label": m.source_label, "source_statement": m.source_statement,
+            "capability_id": c.id, "capability_code": c.capability_code, "capability_name": c.name,
+            "rationale": m.rationale, "prerequisites": m.prerequisites, "approval_state": m.approval_state,
+            "ai_suggestion_id": m.ai_suggestion_id,
+        } for m, c in capabilities],
         "benefits": [{"id": b.id, "finding_id": b.finding_id, "capability_mapping_id": b.capability_mapping_id, "statement": b.statement, "measure_type": b.measure_type, "formula": b.formula, "assumptions": b.assumptions, "approval_state": b.approval_state} for b in benefits],
         "ai_suggestions": [{"id": s.id, "section_id": s.section_id, "purpose": s.purpose, "content": s.content, "source_refs": s.source_refs, "confidence": s.confidence, "review_state": s.review_state, "reviewed_at": _iso(s.reviewed_at), "created_at": _iso(s.created_at)} for s in suggestions],
         "publications": [
@@ -787,6 +916,7 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
 def list_section_content_versions(
     report_id: str,
     section_id: str,
+    content_type: str = "CURRENT_OPERATIONS",
     user: User = Depends(enforce_password_changed),
     db: Session = Depends(get_db),
 ):
@@ -795,13 +925,16 @@ def list_section_content_versions(
     section = _get_section(db, section_id)
     if section.report_id != report.id:
         raise HTTPException(404, "Section not found.")
+    normalized_type = content_type.strip().upper()
+    if normalized_type not in {"CURRENT_OPERATIONS", "CLOUD_INVENTORY_APPROACH"}:
+        raise HTTPException(400, "Unsupported section content type.")
     versions = list(
         db.scalars(
             select(SectionContentVersion)
             .where(
                 SectionContentVersion.report_id == report.id,
                 SectionContentVersion.section_id == section.id,
-                SectionContentVersion.content_type == "CURRENT_OPERATIONS",
+                SectionContentVersion.content_type == normalized_type,
             )
             .order_by(SectionContentVersion.version.desc())
         ).all()
@@ -984,6 +1117,10 @@ def create_finding(report_id: str, payload: FindingCreate, user: User = Depends(
             raise HTTPException(400, "Section does not belong to report.")
     finding = Finding(report_id=report.id, section_id=payload.section_id, finding_type=payload.finding_type, statement=payload.statement, impact=payload.impact, confidence=payload.confidence, client_mutation_id=payload.client_mutation_id, created_by=user.id)
     db.add(finding)
+    if payload.section_id:
+        section = _get_section(db, payload.section_id)
+        section.version += 1
+        section.updated_by = user.id
     _increment_report(report)
     audit(db, actor=user, action="FINDING_CREATED", target_type="FINDING", target_id=finding.id, prospect_id=report.prospect_id, metadata={"report_id": report.id})
     db.commit()
@@ -996,6 +1133,12 @@ def create_metric(report_id: str, payload: MetricCreate, user: User = Depends(en
     require_report_access(db, user, report)
     metric = Metric(report_id=report.id, section_id=payload.section_id, created_by=user.id, **payload.model_dump(exclude={"section_id"}))
     db.add(metric)
+    if payload.section_id:
+        section = _get_section(db, payload.section_id)
+        if section.report_id != report.id:
+            raise HTTPException(400, "Section does not belong to report.")
+        section.version += 1
+        section.updated_by = user.id
     _increment_report(report)
     audit(db, actor=user, action="METRIC_CREATED", target_type="METRIC", target_id=metric.id, prospect_id=report.prospect_id, metadata={"report_id": report.id})
     db.commit()
@@ -1061,21 +1204,52 @@ def review_capability(capability_id: str, payload: ReviewDecision, actor: User =
 def create_mapping(report_id: str, payload: CapabilityMappingCreate, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
     report = _get_report(db, report_id)
     require_report_access(db, user, report)
-    finding = db.get(Finding, payload.finding_id)
     capability = db.get(Capability, payload.capability_id)
-    if not finding or finding.report_id != report.id or not capability:
-        raise HTTPException(400, "Invalid finding or capability.")
+    if not capability:
+        raise HTTPException(400, "Invalid Cloud Inventory capability.")
     if capability.status != "APPROVED":
-        raise HTTPException(409, "Only approved capabilities can be mapped to prospect findings.")
-    mapping = CapabilityMapping(report_id=report.id, finding_id=finding.id, capability_id=capability.id, rationale=payload.rationale, prerequisites=payload.prerequisites, created_by=user.id)
+        raise HTTPException(409, "Only approved capabilities can be mapped to prospect observations or findings.")
+    source = _resolve_mapping_source(
+        db,
+        report,
+        section_id=payload.section_id,
+        source_ref=payload.source_ref,
+        finding_id=payload.finding_id,
+    )
+    existing = db.scalar(
+        select(CapabilityMapping).where(
+            CapabilityMapping.report_id == report.id,
+            CapabilityMapping.capability_id == capability.id,
+            CapabilityMapping.source_ref == source["source_ref"],
+        )
+    )
+    if existing:
+        raise HTTPException(409, "This capability is already mapped to the selected observation or finding.")
+    mapping = CapabilityMapping(
+        report_id=report.id,
+        section_id=source["section_id"],
+        finding_id=source["finding_id"],
+        source_ref=source["source_ref"],
+        source_type=source["source_type"],
+        source_label=source["source_label"],
+        source_statement=source["source_statement"],
+        capability_id=capability.id,
+        rationale=payload.rationale,
+        prerequisites=payload.prerequisites,
+        created_by=user.id,
+    )
     db.add(mapping)
     _increment_report(report)
-    audit(db, actor=user, action="CAPABILITY_MAPPING_CREATED", target_type="CAPABILITY_MAPPING", target_id=mapping.id, prospect_id=report.prospect_id, metadata={"report_id": report.id})
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "This capability is already mapped to the finding.")
+    audit(
+        db,
+        actor=user,
+        action="CAPABILITY_MAPPING_CREATED",
+        target_type="CAPABILITY_MAPPING",
+        target_id=mapping.id,
+        prospect_id=report.prospect_id,
+        metadata={"report_id": report.id, "source_ref": source["source_ref"], "source_type": source["source_type"]},
+    )
+    db.commit()
     return {"id": mapping.id}
 
 
@@ -1474,6 +1648,23 @@ def request_ai(
             context_snapshot = build_observation_snapshot(db, report, section, selected_evidence)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+    elif payload.purpose == "SOLUTION_APPROACH":
+        if not section:
+            raise HTTPException(400, "Cloud Inventory approach generation requires a report section.")
+        if payload.parent_suggestion_id:
+            parent_suggestion = db.get(AiSuggestion, payload.parent_suggestion_id)
+            if (
+                not parent_suggestion
+                or parent_suggestion.report_id != report.id
+                or parent_suggestion.section_id != section.id
+                or parent_suggestion.purpose != "SOLUTION_APPROACH"
+            ):
+                raise HTTPException(400, "Parent Cloud Inventory approach suggestion does not belong to this section.")
+        context_snapshot = build_solution_snapshot(db, report, section)
+        if not context_snapshot.get("operational_sources"):
+            raise HTTPException(409, "Enter current operations notes, guided responses, or findings before generating a Cloud Inventory approach.")
+        if not context_snapshot.get("approved_capabilities"):
+            raise HTTPException(409, "No approved Cloud Inventory capabilities are available for this operational area. Review the capability catalog first.")
 
     decision = evaluate_policy(settings, contains_prospect_confidential_content=True)
     job = AiJob(
@@ -1520,7 +1711,8 @@ def request_ai(
         },
     )
     db.commit()
-    return {"ai_job_id": job.id, "status": job.status, "message": "AI enhancement queued for generation and human review."}
+    message = "Cloud Inventory approach queued for generation and human review." if payload.purpose == "SOLUTION_APPROACH" else "AI enhancement queued for generation and human review."
+    return {"ai_job_id": job.id, "status": job.status, "message": message}
 
 
 @router.get("/ai-jobs/{ai_job_id}")
@@ -1579,7 +1771,7 @@ def review_ai(
     suggestion.reviewed_by = user.id
     suggestion.review_note = payload.note
     suggestion.reviewed_at = utcnow()
-    applied: dict[str, int | bool] = {"narrative": False, "mappings": 0, "benefits": 0}
+    applied: dict[str, int | bool] = {"narrative": False, "solution": False, "mappings": 0, "benefits": 0}
     content = dict(suggestion.content or {})
     if payload.decision == "APPROVED" and not content.get("_applied"):
         target_section = db.get(ReportSection, suggestion.section_id) if suggestion.section_id else None
@@ -1648,6 +1840,115 @@ def review_ai(
             target_section.updated_by = user.id
             applied["narrative"] = True
 
+        elif suggestion.purpose == "SOLUTION_APPROACH":
+            if not target_section:
+                raise HTTPException(409, "The target section is no longer available.")
+            if content.get("verification_status") != "PASSED" or not content.get("accept_allowed", False):
+                raise HTTPException(409, "This Cloud Inventory approach contains unsupported claims or invalid mappings and cannot be accepted. Refine or regenerate it first.")
+            source_version = content.get("source_section_version")
+            if source_version is not None and int(source_version) != target_section.version:
+                raise HTTPException(409, "The section changed after this Cloud Inventory approach was generated. Generate a new approach before accepting it.")
+            if not suggested_text:
+                raise HTTPException(409, "The Cloud Inventory approach does not contain usable text.")
+
+            snapshot = dict(content.get("source_snapshot") or {})
+            # Product and knowledge governance may change while an AI job is
+            # awaiting review. Reject a stale suggestion instead of applying
+            # wording based on superseded or unapproved reference content.
+            for snap_cap in snapshot.get("approved_capabilities") or []:
+                current_cap = db.get(Capability, snap_cap.get("id")) if snap_cap.get("id") else None
+                if not current_cap or current_cap.status != "APPROVED" or current_cap.version != snap_cap.get("version"):
+                    raise HTTPException(409, "The approved Cloud Inventory capability catalog changed after this approach was generated. Regenerate it before accepting.")
+            for snap_knowledge in snapshot.get("approved_knowledge") or []:
+                current_knowledge = db.get(KnowledgeEntry, snap_knowledge.get("id")) if snap_knowledge.get("id") else None
+                if not current_knowledge or current_knowledge.approval_state != "APPROVED":
+                    raise HTTPException(409, "Approved knowledge changed after this approach was generated. Regenerate it before accepting.")
+                expected_updated = snap_knowledge.get("updated_at")
+                current_updated = current_knowledge.updated_at.isoformat() if current_knowledge.updated_at else None
+                if expected_updated and current_updated != expected_updated:
+                    raise HTTPException(409, "Approved knowledge changed after this approach was generated. Regenerate it before accepting.")
+
+            for current in db.scalars(
+                select(SectionContentVersion).where(
+                    SectionContentVersion.section_id == target_section.id,
+                    SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                    SectionContentVersion.is_current.is_(True),
+                )
+            ).all():
+                current.is_current = False
+
+            db.add(
+                SectionContentVersion(
+                    report_id=report.id,
+                    section_id=target_section.id,
+                    content_type="CLOUD_INVENTORY_APPROACH",
+                    version=_next_content_version(db, target_section.id, "CLOUD_INVENTORY_APPROACH"),
+                    text=suggested_text,
+                    source_type="AI_ACCEPTED",
+                    source_refs=content.get("source_refs") or [],
+                    ai_suggestion_id=suggestion.id,
+                    is_current=True,
+                    created_by=user.id,
+                )
+            )
+
+            for recommendation in content.get("capability_mappings") or []:
+                if not isinstance(recommendation, dict):
+                    continue
+                capability_id = str(recommendation.get("capability_id") or "")
+                source_ref = str(recommendation.get("source_ref") or "")
+                capability = db.get(Capability, capability_id) if capability_id else None
+                if not capability or capability.status != "APPROVED":
+                    raise HTTPException(409, "A mapped Cloud Inventory capability is no longer approved.")
+                source = _resolve_mapping_source(
+                    db,
+                    report,
+                    section_id=target_section.id,
+                    source_ref=source_ref,
+                )
+                existing = db.scalar(
+                    select(CapabilityMapping).where(
+                        CapabilityMapping.report_id == report.id,
+                        CapabilityMapping.capability_id == capability.id,
+                        CapabilityMapping.source_ref == source["source_ref"],
+                    )
+                )
+                if existing:
+                    existing.section_id = source["section_id"]
+                    existing.finding_id = source["finding_id"]
+                    existing.source_type = source["source_type"]
+                    existing.source_label = source["source_label"]
+                    existing.source_statement = source["source_statement"]
+                    existing.rationale = str(recommendation.get("rationale") or "AI-assisted mapping approved with the solution approach.")
+                    existing.prerequisites = str(recommendation.get("prerequisites") or "").strip() or None
+                    existing.approval_state = "APPROVED"
+                    existing.approved_by = user.id
+                    existing.ai_suggestion_id = suggestion.id
+                else:
+                    db.add(
+                        CapabilityMapping(
+                            report_id=report.id,
+                            section_id=source["section_id"],
+                            finding_id=source["finding_id"],
+                            source_ref=source["source_ref"],
+                            source_type=source["source_type"],
+                            source_label=source["source_label"],
+                            source_statement=source["source_statement"],
+                            capability_id=capability.id,
+                            rationale=str(recommendation.get("rationale") or "AI-assisted mapping approved with the solution approach."),
+                            prerequisites=str(recommendation.get("prerequisites") or "").strip() or None,
+                            approval_state="APPROVED",
+                            approved_by=user.id,
+                            ai_suggestion_id=suggestion.id,
+                            created_by=user.id,
+                        )
+                    )
+                applied["mappings"] = int(applied["mappings"]) + 1
+
+            target_section.version += 1
+            target_section.updated_by = user.id
+            applied["solution"] = True
+
         elif suggested_text and target_section and suggestion.purpose in {"NARRATIVE", "EXECUTIVE_SUMMARY", "ATTACHMENT_REVIEW"}:
             if suggested_text not in target_section.narrative:
                 target_section.narrative = f"{target_section.narrative.strip()}\n\n{suggested_text}".strip()
@@ -1675,12 +1976,18 @@ def review_ai(
             db.add(
                 CapabilityMapping(
                     report_id=report.id,
+                    section_id=finding.section_id,
                     finding_id=finding.id,
+                    source_ref=f"finding:{finding.id}",
+                    source_type="FINDING",
+                    source_label=finding.finding_type.replace("_", " ").title(),
+                    source_statement=finding.statement,
                     capability_id=capability.id,
                     rationale=str(recommendation.get("rationale") or recommendation.get("reason") or "AI-assisted recommendation approved by reviewer."),
                     prerequisites=str(recommendation.get("prerequisites") or "") or None,
                     approval_state="APPROVED",
                     approved_by=user.id,
+                    ai_suggestion_id=suggestion.id,
                     created_by=user.id,
                 )
             )
@@ -1768,6 +2075,93 @@ def create_knowledge(payload: KnowledgeEntryCreate, actor: User = Depends(requir
     audit(db, actor=actor, action="KNOWLEDGE_CREATED", target_type="KNOWLEDGE_ENTRY", target_id=item.id, prospect_id=item.prospect_id)
     db.commit()
     return {"id": item.id, "approval_state": item.approval_state}
+
+
+
+@router.post("/admin/knowledge/import", dependencies=[Depends(require_csrf)])
+async def import_knowledge_document(
+    title: str = Form(...),
+    process_module: str | None = Form(None),
+    capability_id: str | None = Form(None),
+    prospect_id: str | None = Form(None),
+    file: UploadFile = File(...),
+    actor: User = Depends(require_roles("ADMIN")),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    clean_title = title.strip()
+    if len(clean_title) < 2:
+        raise HTTPException(400, "Knowledge document title is required.")
+    capability = db.get(Capability, capability_id) if capability_id else None
+    if capability_id and not capability:
+        raise HTTPException(400, "Linked capability was not found.")
+    prospect = db.get(Prospect, prospect_id) if prospect_id else None
+    if prospect_id and not prospect:
+        raise HTTPException(400, "Prospect was not found.")
+
+    data = await file.read(settings.max_upload_bytes + 1)
+    if len(data) > settings.max_upload_bytes:
+        raise HTTPException(413, "Knowledge document exceeds the configured upload limit.")
+    filename = Path(file.filename or "historical-document").name
+    extraction = extract_text(data, filename, file.content_type)
+    if extraction.state != "COMPLETED" or not extraction.text:
+        reason = extraction.reason or f"Extraction state: {extraction.state}"
+        raise HTTPException(400, f"The historical document could not be converted to reusable text. {reason}")
+
+    chunks = _knowledge_chunks(extraction.text)
+    if not chunks:
+        raise HTTPException(400, "No reusable text was extracted from the historical document.")
+    digest = hashlib.sha256(data).hexdigest()
+    module_key = (process_module or "general").strip().lower().replace(" ", "_")[:60] or "general"
+    created_ids: list[str] = []
+    skipped = 0
+    for index, chunk in enumerate(chunks, start=1):
+        source_ref = f"historical:{digest[:20]}:{module_key}:{index:03d}"
+        if db.scalar(select(KnowledgeEntry.id).where(KnowledgeEntry.source_ref == source_ref)):
+            skipped += 1
+            continue
+        item = KnowledgeEntry(
+            source_type="HISTORICAL_DOCUMENT",
+            source_ref=source_ref,
+            title=clean_title if len(chunks) == 1 else f"{clean_title} — Part {index} of {len(chunks)}",
+            process_module=(process_module or "").strip() or None,
+            content=chunk,
+            capability_id=capability.id if capability else None,
+            prospect_id=prospect.id if prospect else None,
+            classification="CONFIDENTIAL" if prospect else "INTERNAL",
+            reusable_across_prospects=False,
+            approval_state="PENDING",
+            created_by=actor.id,
+        )
+        db.add(item)
+        db.flush()
+        created_ids.append(item.id)
+    audit(
+        db,
+        actor=actor,
+        action="KNOWLEDGE_DOCUMENT_IMPORTED",
+        target_type="KNOWLEDGE_IMPORT",
+        target_id=digest[:20],
+        prospect_id=prospect.id if prospect else None,
+        metadata={
+            "title": clean_title,
+            "file_name": filename,
+            "sha256": digest,
+            "chunks_created": len(created_ids),
+            "chunks_skipped": skipped,
+            "process_module": process_module,
+            "capability_id": capability_id,
+        },
+    )
+    db.commit()
+    return {
+        "created": len(created_ids),
+        "skipped": skipped,
+        "entry_ids": created_ids,
+        "extraction_state": extraction.state,
+        "classification": "CONFIDENTIAL" if prospect else "INTERNAL",
+        "message": "Historical knowledge imported as pending review. It will not ground AI output until approved.",
+    }
 
 
 @router.post("/admin/knowledge/{entry_id}/review", dependencies=[Depends(require_csrf)])

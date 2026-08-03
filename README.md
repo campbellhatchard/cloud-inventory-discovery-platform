@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.6.1
-**Status:** Report output formatting and publication-history enhancement build; staging validation required
+**Version:** 0.7.0
+**Status:** Cloud Inventory Solution Intelligence build; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -23,6 +23,10 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Context-correct full-colour and negative Cloud Inventory logos
 - Prospect-specific logo upload and header display
 - Compiled Report review workspace with centralized validation and document generation
+- AI-enhanced current-operations wording with selected photograph analysis, verification, refinement, and controlled acceptance
+- Direct section-level photograph upload with Quick Entry capture retained
+- Source-aware Cloud Inventory Approach generation using approved capabilities and approved historical knowledge
+- General section notes and guided responses treated as Observations for Cloud Inventory functionality mapping without creating duplicate Findings
 - Optional discovery questions and sections; only populated sections require review before final publication
 - Stable left-navigation position while moving between report sections
 - Standard and custom report sections

@@ -14,7 +14,12 @@ from .config import Settings
 from .models import (
     AiJob,
     AiSuggestion,
+    Benefit,
     Capability,
+    CapabilityMapping,
+    DemoPlanSettings,
+    DemoPlanVersion,
+    DemoSectionPriority,
     EvidenceAiObservation,
     EvidenceItem,
     FileObject,
@@ -954,6 +959,625 @@ def run_solution_approach(
     }
     return content, _merge_usage(usage_items)
 
+
+
+BENEFIT_CATEGORIES = {
+    "OPERATIONAL_EFFICIENCY",
+    "INVENTORY_VISIBILITY",
+    "ACCURACY_CONTROL",
+    "CUSTOMER_SERVICE",
+    "WORKFORCE_PRODUCTIVITY",
+    "COMPLIANCE_TRACEABILITY",
+    "MANAGEMENT_VISIBILITY",
+    "SCALABILITY",
+}
+
+
+def build_targeted_benefits_snapshot(db: Session, report: Report, section: ReportSection) -> dict[str, Any]:
+    """Build a source packet for benefits tied to one operational section."""
+    solution_snapshot = build_solution_snapshot(db, report, section)
+    solution = db.scalar(
+        select(SectionContentVersion)
+        .where(
+            SectionContentVersion.report_id == report.id,
+            SectionContentVersion.section_id == section.id,
+            SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+            SectionContentVersion.is_current.is_(True),
+        )
+        .order_by(SectionContentVersion.version.desc())
+    )
+    mappings = db.execute(
+        select(CapabilityMapping, Capability)
+        .join(Capability, CapabilityMapping.capability_id == Capability.id)
+        .where(
+            CapabilityMapping.report_id == report.id,
+            CapabilityMapping.section_id == section.id,
+            CapabilityMapping.approval_state == "APPROVED",
+            Capability.status == "APPROVED",
+        )
+        .order_by(Capability.name)
+    ).all()
+    metrics = list(
+        db.scalars(
+            select(Metric)
+            .where(Metric.report_id == report.id, Metric.section_id == section.id)
+            .order_by(Metric.created_at)
+        ).all()
+    )
+    existing = list(
+        db.scalars(
+            select(Benefit)
+            .where(Benefit.report_id == report.id, Benefit.section_id == section.id, Benefit.approval_state != "REJECTED")
+            .order_by(Benefit.created_at)
+        ).all()
+    )
+    return {
+        "purpose": "TARGETED_BENEFITS",
+        "report": {"id": report.id, "title": report.title, "revision": report.revision},
+        "section": {
+            "id": section.id,
+            "title": section.title,
+            "process_module": section.process_module,
+            "version": section.version,
+        },
+        "operational_sources": solution_snapshot.get("operational_sources") or [],
+        "solution": None if not solution else {
+            "ref": f"solution:{solution.id}",
+            "id": solution.id,
+            "version": solution.version,
+            "text": solution.text,
+            "source_type": solution.source_type,
+        },
+        "approved_mappings": [
+            {
+                "ref": f"mapping:{mapping.id}",
+                "id": mapping.id,
+                "source_ref": mapping.source_ref,
+                "source_label": mapping.source_label,
+                "source_statement": mapping.source_statement,
+                "rationale": mapping.rationale,
+                "prerequisites": mapping.prerequisites or capability.typical_prerequisites,
+                "capability": {
+                    "id": capability.id,
+                    "code": capability.capability_code,
+                    "name": capability.name,
+                    "description": capability.controlled_description,
+                    "limitations": capability.limitations,
+                    "version": capability.version,
+                },
+            }
+            for mapping, capability in mappings
+        ],
+        "metrics": [
+            {
+                "ref": f"metric:{metric.id}",
+                "id": metric.id,
+                "name": metric.name,
+                "value_numeric": metric.value_numeric,
+                "value_text": metric.value_text,
+                "unit": metric.unit,
+                "period": metric.period,
+                "source": metric.source,
+                "confidence": metric.confidence,
+            }
+            for metric in metrics
+        ],
+        "existing_benefits": [
+            {
+                "id": item.id,
+                "statement": item.statement,
+                "category": item.category,
+                "measure_type": item.measure_type,
+                "approval_state": item.approval_state,
+            }
+            for item in existing
+        ],
+    }
+
+
+def _benefit_allowed_refs(snapshot: dict[str, Any]) -> set[str]:
+    refs = {str(item.get("ref")) for item in snapshot.get("operational_sources") or [] if item.get("ref")}
+    refs.update(str(item.get("ref")) for item in snapshot.get("approved_mappings") or [] if item.get("ref"))
+    refs.update(str(item.get("ref")) for item in snapshot.get("metrics") or [] if item.get("ref"))
+    solution = snapshot.get("solution") or {}
+    if solution.get("ref"):
+        refs.add(str(solution["ref"]))
+    return refs
+
+
+def _normalize_targeted_benefits(value: Any, snapshot: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    allowed_refs = _benefit_allowed_refs(snapshot)
+    metric_refs = {str(item.get("ref")) for item in snapshot.get("metrics") or [] if item.get("ref")}
+    normalized: list[dict[str, Any]] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value or []):
+        if not isinstance(raw, dict):
+            errors.append(f"Benefit {index + 1} was not an object.")
+            continue
+        statement = str(raw.get("statement") or raw.get("text") or "").strip()
+        if not statement:
+            errors.append(f"Benefit {index + 1} did not contain a statement.")
+            continue
+        key = statement.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        category = str(raw.get("category") or "OPERATIONAL_EFFICIENCY").upper()
+        if category not in BENEFIT_CATEGORIES:
+            category = "OPERATIONAL_EFFICIENCY"
+        measure_type = str(raw.get("measure_type") or "QUALITATIVE").upper()
+        if measure_type not in {"QUALITATIVE", "QUANTITATIVE"}:
+            measure_type = "QUALITATIVE"
+        source_refs = [str(ref) for ref in raw.get("source_refs") or [] if str(ref) in allowed_refs]
+        if not source_refs:
+            errors.append(f"Benefit {index + 1} was not linked to an operational, solution, mapping, or metric source.")
+        formula = str(raw.get("formula") or "").strip() or None
+        assumptions = str(raw.get("assumptions") or "").strip() or None
+        if measure_type == "QUANTITATIVE":
+            if not any(ref in metric_refs for ref in source_refs):
+                errors.append(f"Quantitative benefit {index + 1} does not reference a recorded metric.")
+            if not formula or not assumptions:
+                errors.append(f"Quantitative benefit {index + 1} requires a formula and explicit assumptions.")
+        elif re.search(r"(?<![A-Za-z])\d+(?:\.\d+)?\s*%", statement):
+            errors.append(f"Qualitative benefit {index + 1} contains an unsupported percentage claim.")
+        confidence = str(raw.get("confidence") or "MEDIUM").upper()
+        if confidence not in {"LOW", "MEDIUM", "HIGH"}:
+            confidence = "MEDIUM"
+        normalized.append({
+            "statement": statement,
+            "category": category,
+            "measure_type": measure_type,
+            "formula": formula,
+            "assumptions": assumptions,
+            "confidence": confidence,
+            "source_refs": source_refs,
+        })
+    return normalized, errors
+
+
+def _verify_targeted_benefits(
+    settings: Settings,
+    snapshot: dict[str, Any],
+    benefits: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    system = (
+        "You verify targeted benefit statements for a customer discovery report. Use only the supplied current-operation sources, "
+        "accepted Cloud Inventory approach, approved capability mappings, and recorded metrics. Do not use external knowledge. "
+        "Block invented outcomes, guarantees, financial results, performance percentages, time savings, accuracy improvements, or numeric claims without an explicit metric, formula, and assumptions. "
+        "Qualitative benefits may describe the direction of expected operational value but must not present an unvalidated result as achieved. "
+        "Return only JSON with verification_status (PASSED or BLOCKED) and unsupported_claims."
+    )
+    payload = {
+        "operational_sources": snapshot.get("operational_sources") or [],
+        "solution": snapshot.get("solution"),
+        "approved_mappings": snapshot.get("approved_mappings") or [],
+        "metrics": snapshot.get("metrics") or [],
+        "proposed_benefits": benefits,
+    }
+    result, usage = _call_json(settings, system=system, user_content=json.dumps(payload, ensure_ascii=False))
+    unsupported = result.get("unsupported_claims") or []
+    status = str(result.get("verification_status") or ("BLOCKED" if unsupported else "PASSED")).upper()
+    if status not in {"PASSED", "BLOCKED"}:
+        status = "BLOCKED" if unsupported else "PASSED"
+    return {"verification_status": status, "unsupported_claims": unsupported}, usage
+
+
+def run_targeted_benefits(
+    settings: Settings,
+    snapshot: dict[str, Any],
+    instructions: str | None,
+    prior_suggestion: AiSuggestion | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not snapshot.get("operational_sources"):
+        raise ValueError("Enter current operations notes or findings before generating targeted benefits.")
+    if not snapshot.get("solution") and not snapshot.get("approved_mappings"):
+        raise ValueError("Enter or accept a Cloud Inventory approach, or approve a capability mapping, before generating targeted benefits.")
+    prior = []
+    if prior_suggestion:
+        prior = list((prior_suggestion.content or {}).get("benefits") or [])
+    usage_items: list[dict[str, Any]] = []
+    system = (
+        "You are a senior Cloud Inventory value consultant drafting concise targeted benefits for one operational area. "
+        "Use only the supplied current-operation sources, accepted Cloud Inventory approach, approved capability mappings, and metrics. "
+        "Do not invent problems from neutral observations. Do not create guarantees or unsupported numeric improvements. "
+        "Use QUALITATIVE unless an explicit recorded metric supports a QUANTITATIVE statement with a formula and assumptions. "
+        "Return only JSON with benefits and gaps. benefits must be an array of objects with statement, category, measure_type, formula, assumptions, confidence, and source_refs."
+    )
+    payload = {
+        "section": snapshot.get("section"),
+        "operational_sources": snapshot.get("operational_sources") or [],
+        "accepted_solution": snapshot.get("solution"),
+        "approved_mappings": snapshot.get("approved_mappings") or [],
+        "metrics": snapshot.get("metrics") or [],
+        "existing_benefits": snapshot.get("existing_benefits") or [],
+        "prior_ai_benefits": prior,
+        "user_refinement_instruction": instructions or None,
+    }
+    generated, usage = _call_json(settings, system=system, user_content=json.dumps(payload, ensure_ascii=False))
+    usage_items.append(usage)
+    benefits, validation_errors = _normalize_targeted_benefits(generated.get("benefits") or generated.get("benefit_statements"), snapshot)
+    if not benefits:
+        validation_errors.append("No valid targeted benefit statements were generated.")
+    verification, verify_usage = _verify_targeted_benefits(settings, snapshot, benefits)
+    usage_items.append(verify_usage)
+    if validation_errors:
+        verification["verification_status"] = "BLOCKED"
+        verification["unsupported_claims"] = list(verification.get("unsupported_claims") or []) + [
+            {"text": "Benefit validation", "reason": error} for error in validation_errors
+        ]
+    if verification["verification_status"] == "BLOCKED":
+        repair_system = (
+            "Repair the targeted benefits using only the supplied source packet. Remove unsupported numeric claims, guarantees, and ungrounded statements. "
+            "Return only JSON with benefits using the same schema."
+        )
+        repaired, repair_usage = _call_json(
+            settings,
+            system=repair_system,
+            user_content=json.dumps({
+                "source_packet": snapshot,
+                "proposed_benefits": benefits,
+                "issues": verification.get("unsupported_claims") or [],
+            }, ensure_ascii=False),
+        )
+        usage_items.append(repair_usage)
+        repaired_benefits, repaired_errors = _normalize_targeted_benefits(repaired.get("benefits"), snapshot)
+        if repaired_benefits:
+            benefits = repaired_benefits
+            verification, verify_usage_2 = _verify_targeted_benefits(settings, snapshot, benefits)
+            usage_items.append(verify_usage_2)
+            if repaired_errors:
+                verification["verification_status"] = "BLOCKED"
+                verification["unsupported_claims"] = list(verification.get("unsupported_claims") or []) + [
+                    {"text": "Benefit validation", "reason": error} for error in repaired_errors
+                ]
+    label_lookup = {str(item.get("ref")): item.get("label") or item.get("name") or item.get("ref") for item in snapshot.get("operational_sources") or []}
+    for item in snapshot.get("approved_mappings") or []:
+        label_lookup[str(item.get("ref"))] = f"{item.get('capability', {}).get('code')} — {item.get('capability', {}).get('name')}"
+    for item in snapshot.get("metrics") or []:
+        label_lookup[str(item.get("ref"))] = item.get("name") or item.get("ref")
+    if snapshot.get("solution"):
+        label_lookup[str(snapshot["solution"].get("ref"))] = "Accepted Cloud Inventory approach"
+    source_refs = []
+    for benefit in benefits:
+        for ref in benefit.get("source_refs") or []:
+            if not any(item.get("ref") == ref for item in source_refs):
+                source_refs.append({"ref": ref, "label": label_lookup.get(ref, ref)})
+    content = {
+        "benefits": benefits,
+        "benefit_statements": benefits,
+        "gaps": generated.get("gaps") or [],
+        "source_refs": source_refs,
+        "source_snapshot": snapshot,
+        "verification_status": verification["verification_status"],
+        "unsupported_claims": verification.get("unsupported_claims") or [],
+        "accept_allowed": verification["verification_status"] == "PASSED" and bool(benefits),
+        "refinement_instruction": instructions,
+        "parent_suggestion_id": prior_suggestion.id if prior_suggestion else None,
+        "source_section_version": snapshot.get("section", {}).get("version"),
+        "source_report_revision": snapshot.get("report", {}).get("revision"),
+    }
+    return content, _merge_usage(usage_items)
+
+
+def build_demo_plan_snapshot(db: Session, report: Report) -> dict[str, Any]:
+    settings = db.get(DemoPlanSettings, report.id)
+    priority_rows = list(
+        db.scalars(select(DemoSectionPriority).where(DemoSectionPriority.report_id == report.id)).all()
+    )
+    priorities = {item.section_id: item for item in priority_rows}
+    sections = list(
+        db.scalars(
+            select(ReportSection)
+            .where(ReportSection.report_id == report.id, ReportSection.state != "REMOVED")
+            .order_by(ReportSection.display_order)
+        ).all()
+    )
+    section_packets: list[dict[str, Any]] = []
+    all_refs: list[dict[str, Any]] = []
+    for section in sections:
+        priority = priorities.get(section.id)
+        solution = db.scalar(
+            select(SectionContentVersion)
+            .where(
+                SectionContentVersion.report_id == report.id,
+                SectionContentVersion.section_id == section.id,
+                SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                SectionContentVersion.is_current.is_(True),
+            )
+            .order_by(SectionContentVersion.version.desc())
+        )
+        source_snapshot = build_solution_snapshot(db, report, section)
+        mappings = db.execute(
+            select(CapabilityMapping, Capability)
+            .join(Capability, CapabilityMapping.capability_id == Capability.id)
+            .where(
+                CapabilityMapping.report_id == report.id,
+                CapabilityMapping.section_id == section.id,
+                CapabilityMapping.approval_state == "APPROVED",
+                Capability.status == "APPROVED",
+            )
+            .order_by(Capability.name)
+        ).all()
+        benefits = list(
+            db.scalars(
+                select(Benefit)
+                .where(
+                    Benefit.report_id == report.id,
+                    Benefit.section_id == section.id,
+                    Benefit.approval_state == "APPROVED",
+                )
+                .order_by(Benefit.created_at)
+            ).all()
+        )
+        operational = source_snapshot.get("operational_sources") or []
+        mapping_payload = []
+        for mapping, capability in mappings:
+            ref = f"mapping:{mapping.id}"
+            item = {
+                "ref": ref,
+                "id": mapping.id,
+                "source_ref": mapping.source_ref,
+                "source_label": mapping.source_label,
+                "source_statement": mapping.source_statement,
+                "rationale": mapping.rationale,
+                "prerequisites": mapping.prerequisites or capability.typical_prerequisites,
+                "capability": {
+                    "id": capability.id,
+                    "code": capability.capability_code,
+                    "name": capability.name,
+                    "description": capability.controlled_description,
+                    "limitations": capability.limitations,
+                    "version": capability.version,
+                },
+            }
+            mapping_payload.append(item)
+            all_refs.append({"ref": ref, "label": f"{capability.capability_code} — {capability.name}"})
+        benefit_payload = []
+        for benefit in benefits:
+            ref = f"benefit:{benefit.id}"
+            item = {
+                "ref": ref,
+                "id": benefit.id,
+                "statement": benefit.statement,
+                "category": benefit.category,
+                "measure_type": benefit.measure_type,
+                "confidence": benefit.confidence,
+            }
+            benefit_payload.append(item)
+            all_refs.append({"ref": ref, "label": benefit.statement})
+        for item in operational:
+            all_refs.append({"ref": item.get("ref"), "label": item.get("label") or item.get("ref")})
+        solution_payload = None
+        if solution:
+            solution_payload = {
+                "ref": f"solution:{solution.id}",
+                "id": solution.id,
+                "version": solution.version,
+                "text": solution.text,
+            }
+            all_refs.append({"ref": solution_payload["ref"], "label": f"{section.title} Cloud Inventory approach"})
+        section_packets.append({
+            "id": section.id,
+            "title": section.title,
+            "process_module": section.process_module,
+            "display_order": section.display_order,
+            "section_version": section.version,
+            "priority": priority.priority if priority else "OPTIONAL",
+            "user_notes": priority.user_notes if priority else "",
+            "constraints": priority.constraints if priority else "",
+            "estimated_minutes": priority.estimated_minutes if priority else None,
+            "operational_sources": operational,
+            "solution": solution_payload,
+            "approved_mappings": mapping_payload,
+            "approved_benefits": benefit_payload,
+        })
+    current = db.scalar(
+        select(DemoPlanVersion)
+        .where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))
+        .order_by(DemoPlanVersion.version.desc())
+    )
+    deduped_refs: list[dict[str, Any]] = []
+    for item in all_refs:
+        if item.get("ref") and not any(row["ref"] == item["ref"] for row in deduped_refs):
+            deduped_refs.append(item)
+    return {
+        "purpose": "DEMO_PLAN",
+        "report": {"id": report.id, "title": report.title, "revision": report.revision},
+        "settings": {
+            "audience": settings.audience if settings else "",
+            "duration_minutes": settings.duration_minutes if settings else 45,
+            "additional_priorities": settings.additional_priorities if settings else "",
+            "version": settings.version if settings else None,
+        },
+        "sections": section_packets,
+        "allowed_source_refs": deduped_refs,
+        "current_demo_plan": None if not current else {
+            "version": current.version,
+            "content": current.content,
+            "source_type": current.source_type,
+        },
+    }
+
+
+def _normalize_demo_plan(value: Any, snapshot: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    raw = value if isinstance(value, dict) else {}
+    errors: list[str] = []
+    sections = {str(item.get("id")): item for item in snapshot.get("sections") or [] if item.get("id")}
+    allowed_refs = {str(item.get("ref")) for item in snapshot.get("allowed_source_refs") or [] if item.get("ref")}
+    mapping_to_section: dict[str, str] = {}
+    for section in sections.values():
+        for mapping in section.get("approved_mappings") or []:
+            mapping_to_section[str(mapping.get("id"))] = str(section["id"])
+    flow: list[dict[str, Any]] = []
+    included_sections: set[str] = set()
+    for index, item in enumerate(raw.get("flow") or raw.get("demo_flow") or []):
+        if not isinstance(item, dict):
+            errors.append(f"Demo flow item {index + 1} was not an object.")
+            continue
+        section_id = str(item.get("section_id") or "")
+        section = sections.get(section_id)
+        if not section:
+            errors.append(f"Demo flow item {index + 1} references an unknown section.")
+            continue
+        if section.get("priority") == "DO_NOT_SHOW":
+            errors.append(f"Demo flow item {index + 1} includes a section marked DO NOT SHOW.")
+            continue
+        mapping_ids = [str(value) for value in item.get("capability_mapping_ids") or []]
+        mapping_ids = [value for value in mapping_ids if mapping_to_section.get(value) == section_id]
+        if not mapping_ids:
+            errors.append(f"Demo flow item {index + 1} does not reference an approved capability mapping for its section.")
+        source_refs = [str(ref) for ref in item.get("source_refs") or [] if str(ref) in allowed_refs]
+        if not source_refs:
+            errors.append(f"Demo flow item {index + 1} has no valid source references.")
+        included_sections.add(section_id)
+        flow.append({
+            "sequence": len(flow) + 1,
+            "section_id": section_id,
+            "operational_area": str(item.get("operational_area") or section.get("title") or "").strip(),
+            "priority": section.get("priority") or "OPTIONAL",
+            "functionality": str(item.get("functionality") or "").strip(),
+            "scenario": str(item.get("scenario") or "").strip(),
+            "customer_context": str(item.get("customer_context") or "").strip(),
+            "value_statement": str(item.get("value_statement") or "").strip(),
+            "sample_data": str(item.get("sample_data") or "").strip(),
+            "user_role": str(item.get("user_role") or "").strip(),
+            "steps": [str(value).strip() for value in item.get("steps") or [] if str(value).strip()],
+            "expected_result": str(item.get("expected_result") or "").strip(),
+            "talking_points": [str(value).strip() for value in item.get("talking_points") or [] if str(value).strip()],
+            "questions": [str(value).strip() for value in item.get("questions") or [] if str(value).strip()],
+            "capability_mapping_ids": mapping_ids,
+            "source_refs": source_refs,
+            "estimated_minutes": item.get("estimated_minutes") or section.get("estimated_minutes"),
+        })
+    for section in sections.values():
+        if section.get("priority") == "MUST_SHOW" and str(section["id"]) not in included_sections:
+            errors.append(f"Must-show operational area '{section.get('title')}' is missing from the demo flow.")
+    if not flow:
+        errors.append("No valid demo flow items were generated.")
+    objectives = [str(value).strip() for value in raw.get("objectives") or [] if str(value).strip()]
+    if not objectives:
+        errors.append("The demo plan did not include objectives.")
+    return {
+        "title": str(raw.get("title") or "Cloud Inventory Solution Demonstration Plan").strip(),
+        "audience": str(raw.get("audience") or snapshot.get("settings", {}).get("audience") or "").strip(),
+        "duration_minutes": int(raw.get("duration_minutes") or snapshot.get("settings", {}).get("duration_minutes") or 45),
+        "objectives": objectives,
+        "flow": flow,
+        "risks_to_avoid": [str(value).strip() for value in raw.get("risks_to_avoid") or raw.get("claims_to_avoid") or [] if str(value).strip()],
+        "open_questions": [str(value).strip() for value in raw.get("open_questions") or raw.get("gaps") or [] if str(value).strip()],
+        "preparation_notes": [str(value).strip() for value in raw.get("preparation_notes") or [] if str(value).strip()],
+    }, errors
+
+
+def _verify_demo_plan(settings: Settings, snapshot: dict[str, Any], plan: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    system = (
+        "You verify an internal Cloud Inventory demonstration plan. Use only the supplied accepted current-state content, approved capability mappings, approved benefits, and user-entered demo priorities. "
+        "Block invented product behavior, unsupported outcomes, guarantees, numeric value claims, ignored MUST_SHOW priorities, included DO_NOT_SHOW areas, or demo steps that are not supported by an approved mapping. "
+        "Return only JSON with verification_status (PASSED or BLOCKED) and unsupported_claims."
+    )
+    result, usage = _call_json(
+        settings,
+        system=system,
+        user_content=json.dumps({"source_packet": snapshot, "proposed_demo_plan": plan}, ensure_ascii=False),
+    )
+    unsupported = result.get("unsupported_claims") or []
+    status = str(result.get("verification_status") or ("BLOCKED" if unsupported else "PASSED")).upper()
+    if status not in {"PASSED", "BLOCKED"}:
+        status = "BLOCKED" if unsupported else "PASSED"
+    return {"verification_status": status, "unsupported_claims": unsupported}, usage
+
+
+def run_demo_plan(
+    settings: Settings,
+    snapshot: dict[str, Any],
+    instructions: str | None,
+    prior_suggestion: AiSuggestion | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    eligible = [
+        section for section in snapshot.get("sections") or []
+        if section.get("priority") != "DO_NOT_SHOW" and section.get("approved_mappings")
+    ]
+    if not eligible:
+        raise ValueError("Approve at least one capability mapping before generating a demo plan.")
+    prior_plan = None
+    if prior_suggestion:
+        prior_plan = (prior_suggestion.content or {}).get("demo_plan")
+    usage_items: list[dict[str, Any]] = []
+    system = (
+        "You are a senior Cloud Inventory presales consultant creating an internal, customer-specific demonstration plan. "
+        "Use only the supplied accepted discovery content, approved capability mappings, approved benefits, user-entered priorities, constraints, audience, and duration. "
+        "MUST_SHOW items must be included. DO_NOT_SHOW items must be excluded. Sequence the flow logically and fit the available time. "
+        "Each demo item must reference an approved capability mapping and source evidence. Value statements must be contextual and qualitative unless an approved quantitative benefit explicitly supports the number. "
+        "Identify functionality not confirmed, dependencies, unresolved questions, and claims the presenter should avoid. "
+        "Return only JSON with title, audience, duration_minutes, objectives, flow, risks_to_avoid, open_questions, and preparation_notes. "
+        "Each flow item must contain section_id, operational_area, functionality, scenario, customer_context, value_statement, sample_data, user_role, steps, expected_result, talking_points, questions, capability_mapping_ids, source_refs, and estimated_minutes."
+    )
+    generated, usage = _call_json(
+        settings,
+        system=system,
+        user_content=json.dumps({
+            "report": snapshot.get("report"),
+            "settings": snapshot.get("settings"),
+            "sections": snapshot.get("sections"),
+            "current_demo_plan": snapshot.get("current_demo_plan"),
+            "prior_ai_plan": prior_plan,
+            "user_refinement_instruction": instructions or None,
+        }, ensure_ascii=False),
+    )
+    usage_items.append(usage)
+    plan, plan_errors = _normalize_demo_plan(generated, snapshot)
+    verification, verify_usage = _verify_demo_plan(settings, snapshot, plan)
+    usage_items.append(verify_usage)
+    if plan_errors:
+        verification["verification_status"] = "BLOCKED"
+        verification["unsupported_claims"] = list(verification.get("unsupported_claims") or []) + [
+            {"text": "Demo plan validation", "reason": error} for error in plan_errors
+        ]
+    if verification["verification_status"] == "BLOCKED":
+        repair_system = (
+            "Repair the demonstration plan using only the same source packet. Include every MUST_SHOW area, exclude every DO_NOT_SHOW area, remove unsupported claims, and reference approved mappings. "
+            "Return only the complete JSON demo plan using the original schema."
+        )
+        repaired, repair_usage = _call_json(
+            settings,
+            system=repair_system,
+            user_content=json.dumps({
+                "source_packet": snapshot,
+                "proposed_demo_plan": plan,
+                "issues": verification.get("unsupported_claims") or [],
+            }, ensure_ascii=False),
+        )
+        usage_items.append(repair_usage)
+        repaired_plan, repaired_errors = _normalize_demo_plan(repaired, snapshot)
+        if repaired_plan.get("flow"):
+            plan = repaired_plan
+            verification, verify_usage_2 = _verify_demo_plan(settings, snapshot, plan)
+            usage_items.append(verify_usage_2)
+            if repaired_errors:
+                verification["verification_status"] = "BLOCKED"
+                verification["unsupported_claims"] = list(verification.get("unsupported_claims") or []) + [
+                    {"text": "Demo plan validation", "reason": error} for error in repaired_errors
+                ]
+    used_refs: list[str] = []
+    for item in plan.get("flow") or []:
+        for ref in item.get("source_refs") or []:
+            if ref not in used_refs:
+                used_refs.append(ref)
+    labels = {str(item.get("ref")): item.get("label") or item.get("ref") for item in snapshot.get("allowed_source_refs") or []}
+    content = {
+        "demo_plan": plan,
+        "source_refs": [{"ref": ref, "label": labels.get(ref, ref)} for ref in used_refs],
+        "source_snapshot": snapshot,
+        "verification_status": verification["verification_status"],
+        "unsupported_claims": verification.get("unsupported_claims") or [],
+        "accept_allowed": verification["verification_status"] == "PASSED" and bool(plan.get("flow")),
+        "refinement_instruction": instructions,
+        "parent_suggestion_id": prior_suggestion.id if prior_suggestion else None,
+        "source_report_revision": snapshot.get("report", {}).get("revision"),
+    }
+    return content, _merge_usage(usage_items)
+
 def process_ai_job(db: Session, ai_job_id: str, settings: Settings) -> AiSuggestion:
     job = db.get(AiJob, ai_job_id)
     if not job:
@@ -1001,6 +1625,24 @@ def process_ai_job(db: Session, ai_job_id: str, settings: Settings) -> AiSuggest
             if parent and (parent.report_id != report.id or parent.section_id != section.id or parent.purpose != "SOLUTION_APPROACH"):
                 raise ValueError("Parent solution suggestion does not belong to this report section")
             content, usage = run_solution_approach(settings, snapshot, job.instructions, parent)
+        elif job.purpose == "TARGETED_BENEFITS":
+            if not section:
+                raise ValueError("Targeted benefit generation requires a report section")
+            snapshot = dict(job.context_snapshot or {})
+            if not snapshot:
+                snapshot = build_targeted_benefits_snapshot(db, report, section)
+            parent = db.get(AiSuggestion, job.parent_suggestion_id) if job.parent_suggestion_id else None
+            if parent and (parent.report_id != report.id or parent.section_id != section.id or parent.purpose != "TARGETED_BENEFITS"):
+                raise ValueError("Parent targeted-benefit suggestion does not belong to this report section")
+            content, usage = run_targeted_benefits(settings, snapshot, job.instructions, parent)
+        elif job.purpose == "DEMO_PLAN":
+            snapshot = dict(job.context_snapshot or {})
+            if not snapshot:
+                snapshot = build_demo_plan_snapshot(db, report)
+            parent = db.get(AiSuggestion, job.parent_suggestion_id) if job.parent_suggestion_id else None
+            if parent and (parent.report_id != report.id or parent.purpose != "DEMO_PLAN"):
+                raise ValueError("Parent demo-plan suggestion does not belong to this report")
+            content, usage = run_demo_plan(settings, snapshot, job.instructions, parent)
         else:
             context = build_context(db, report, section, job.purpose, job.instructions)
             content, usage = run_ai(settings, context)

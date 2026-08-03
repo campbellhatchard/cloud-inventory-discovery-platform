@@ -403,3 +403,20 @@ tr:last-child td { border-bottom: 0; }
 /* v0.7.1 manual Cloud Inventory approach entry */
 .solution-approach-editor { min-height:220px; line-height:1.55; }
 #solution-approach-save { min-height:20px; }
+
+/* v0.8.0 targeted benefits and demo orchestration */
+.benefit-list,.benefit-selection-list,.demo-flow-preview,.demo-priority-summary,.accepted-demo-plan { display:grid; gap:10px; }
+.benefit-selection-item { display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:start; padding:12px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+.benefit-selection-item input { margin-top:4px; }
+.benefit-selection-item p { margin:5px 0; line-height:1.45; }
+.benefit-selection-item small { display:block; margin-top:6px; color:var(--muted); }
+#section-demo-priority-form,#demo-settings-form { margin-top:12px; }
+.demo-priority-summary { margin-top:18px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+.accepted-demo-plan { margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--surface-2); }
+.demo-flow-preview { margin-top:12px; }
+.demo-flow-preview .finding { margin:0; }
+#demo-preparation { margin-bottom:16px; }
+@media (max-width:720px) {
+  .benefit-selection-item { grid-template-columns:1fr; }
+  .demo-priority-summary { grid-template-columns:1fr; }
+}

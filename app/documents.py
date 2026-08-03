@@ -27,6 +27,8 @@ from .models import (
     BrandingProfile,
     Capability,
     CapabilityMapping,
+    DemoPlanSettings,
+    DemoPlanVersion,
     Engagement,
     EvidenceItem,
     FileObject,
@@ -388,6 +390,97 @@ def _add_evidence(doc: Document, db: Session, storage: ObjectStorage | None, evi
             doc.add_paragraph(f"Evidence unavailable during generation: {file_obj.file_name} ({exc})", style="Evidence Caption")
 
 
+
+
+def _add_demo_plan_document(doc: Document, plan: dict, settings: DemoPlanSettings | None) -> None:
+    doc.add_heading("Demo Objectives", level=1)
+    objectives = plan.get("objectives") or []
+    if objectives:
+        for objective in objectives:
+            doc.add_paragraph(str(objective), style="List Bullet")
+    else:
+        doc.add_paragraph("No accepted demo objectives have been recorded.")
+
+    doc.add_heading("Demo Context", level=1)
+    audience = str(plan.get("audience") or (settings.audience if settings else "") or "Not specified")
+    duration = int(plan.get("duration_minutes") or (settings.duration_minutes if settings else 45))
+    context_table = doc.add_table(rows=2, cols=2)
+    context_table.style = "Table Grid"
+    context_table.cell(0, 0).text = "Audience"
+    context_table.cell(0, 1).text = audience
+    context_table.cell(1, 0).text = "Planned duration"
+    context_table.cell(1, 1).text = f"{duration} minutes"
+    for row in context_table.rows:
+        row.cells[0].paragraphs[0].runs[0].bold = True
+
+    flow = list(plan.get("flow") or [])
+    doc.add_heading("Recommended Demo Flow", level=1)
+    if flow:
+        table = doc.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+        headers = ["Sequence", "Operational area", "Functionality", "Why it matters", "Time"]
+        for idx, value in enumerate(headers):
+            table.rows[0].cells[idx].text = value
+            table.rows[0].cells[idx].paragraphs[0].runs[0].bold = True
+        _set_repeat_table_header(table.rows[0])
+        for item in flow:
+            cells = table.add_row().cells
+            cells[0].text = str(item.get("sequence") or "")
+            cells[1].text = str(item.get("operational_area") or "")
+            cells[2].text = str(item.get("functionality") or "")
+            cells[3].text = str(item.get("value_statement") or item.get("customer_context") or "")
+            cells[4].text = f"{item.get('estimated_minutes')} min" if item.get("estimated_minutes") else ""
+    else:
+        doc.add_paragraph("No accepted demo flow is available.")
+
+    for item in flow:
+        sequence = item.get("sequence") or ""
+        area = item.get("operational_area") or "Operational area"
+        doc.add_heading(f"{sequence}. {area}", level=1)
+        if item.get("priority"):
+            p = doc.add_paragraph()
+            p.add_run("Priority: ").bold = True
+            p.add_run(str(item["priority"]).replace("_", " ").title())
+        for label, key in [
+            ("Customer operational context", "customer_context"),
+            ("Scenario", "scenario"),
+            ("Functionality to demonstrate", "functionality"),
+            ("Sample data required", "sample_data"),
+            ("User role", "user_role"),
+            ("Expected result", "expected_result"),
+            ("Contextual value statement", "value_statement"),
+        ]:
+            value = str(item.get(key) or "").strip()
+            if value:
+                doc.add_heading(label, level=2)
+                _add_text(doc, value)
+        for label, key in [
+            ("Demonstration steps", "steps"),
+            ("Presenter talking points", "talking_points"),
+            ("Questions to ask", "questions"),
+        ]:
+            values = [str(value).strip() for value in item.get(key) or [] if str(value).strip()]
+            if values:
+                doc.add_heading(label, level=2)
+                for value in values:
+                    doc.add_paragraph(value, style="List Number" if key == "steps" else "List Bullet")
+
+    risks = [str(value).strip() for value in plan.get("risks_to_avoid") or [] if str(value).strip()]
+    questions = [str(value).strip() for value in plan.get("open_questions") or [] if str(value).strip()]
+    preparation = [str(value).strip() for value in plan.get("preparation_notes") or [] if str(value).strip()]
+    if risks:
+        doc.add_heading("Claims and Risks to Avoid", level=1)
+        for value in risks:
+            doc.add_paragraph(value, style="List Bullet")
+    if questions:
+        doc.add_heading("Open Questions and Gaps", level=1)
+        for value in questions:
+            doc.add_paragraph(value, style="List Bullet")
+    if preparation:
+        doc.add_heading("Presales Preparation Notes", level=1)
+        for value in preparation:
+            doc.add_paragraph(value, style="List Bullet")
+
 def generate_docx(db: Session, report_id: str, settings: Settings, *, publication_type: str, is_final: bool) -> bytes:
     report = db.get(Report, report_id)
     if not report:
@@ -438,6 +531,12 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         doc.add_heading("Solution Demonstration Brief", level=1)
 
     all_sections = list(db.scalars(select(ReportSection).where(ReportSection.report_id == report.id, ReportSection.state != "REMOVED").order_by(ReportSection.display_order)).all())
+    demo_settings = db.get(DemoPlanSettings, report.id)
+    demo_plan_version = db.scalar(
+        select(DemoPlanVersion)
+        .where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))
+        .order_by(DemoPlanVersion.version.desc())
+    )
 
     def has_publishable_content(section: ReportSection) -> bool:
         if section.narrative.strip():
@@ -446,6 +545,10 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
             select(Response.id).where(Response.section_id == section.id).limit(1),
             select(Finding.id).where(Finding.section_id == section.id, Finding.status != "REJECTED").limit(1),
             select(EvidenceItem.id).where(EvidenceItem.section_id == section.id, EvidenceItem.status.in_(["READY", "AVAILABLE"])).limit(1),
+            select(Benefit.id).where(
+                Benefit.section_id == section.id,
+                Benefit.approval_state == "APPROVED",
+            ).limit(1),
             select(SectionContentVersion.id).where(
                 SectionContentVersion.section_id == section.id,
                 SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
@@ -464,6 +567,9 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         sections = [s for s in all_sections if has_publishable_content(s)]
 
     _add_toc(doc)
+    if publication_type == "DEMO_BRIEF" and demo_plan_version and demo_plan_version.content:
+        _add_demo_plan_document(doc, demo_plan_version.content, demo_settings)
+        sections = []
     for section in sections:
         doc.add_heading(section.title, level=1)
         if publication_type == "FOLLOW_UP_QUESTIONNAIRE":
@@ -537,11 +643,25 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
                 if capability.limitations:
                     doc.add_paragraph("Limitations: " + capability.limitations)
 
-        benefits = list(db.scalars(select(Benefit).join(Finding, Benefit.finding_id == Finding.id, isouter=True).where(Benefit.report_id == report.id, Benefit.approval_state == "APPROVED", (Finding.section_id == section.id) | (Benefit.finding_id.is_(None)))).all())
+        benefits = list(
+            db.scalars(
+                select(Benefit)
+                .where(
+                    Benefit.report_id == report.id,
+                    Benefit.section_id == section.id,
+                    Benefit.approval_state == "APPROVED",
+                )
+                .order_by(Benefit.created_at)
+            ).all()
+        )
         if benefits:
             doc.add_heading("Benefits", level=2)
             for benefit in benefits:
-                doc.add_paragraph(benefit.statement, style="List Bullet")
+                p = doc.add_paragraph(style="List Bullet")
+                p.add_run(f"{benefit.category.replace('_', ' ').title()}: ").bold = True
+                p.add_run(benefit.statement)
+                if benefit.source_label:
+                    doc.add_paragraph(f"Basis: {benefit.source_label}")
                 if benefit.measure_type == "QUANTITATIVE" and (benefit.formula or benefit.assumptions):
                     doc.add_paragraph(f"Measurement basis: {benefit.formula or 'To be established'}. Assumptions: {benefit.assumptions or 'None recorded.'}")
 

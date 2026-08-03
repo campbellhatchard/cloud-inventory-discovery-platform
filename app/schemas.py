@@ -149,17 +149,46 @@ class CapabilityMappingCreate(BaseModel):
 
 
 class BenefitCreate(BaseModel):
+    section_id: str | None = None
     finding_id: str | None = None
     capability_mapping_id: str | None = None
+    source_ref: str | None = Field(default=None, max_length=160)
     statement: str = Field(min_length=1)
+    category: Literal[
+        "OPERATIONAL_EFFICIENCY",
+        "INVENTORY_VISIBILITY",
+        "ACCURACY_CONTROL",
+        "CUSTOMER_SERVICE",
+        "WORKFORCE_PRODUCTIVITY",
+        "COMPLIANCE_TRACEABILITY",
+        "MANAGEMENT_VISIBILITY",
+        "SCALABILITY",
+    ] = "OPERATIONAL_EFFICIENCY"
     measure_type: Literal["QUALITATIVE", "QUANTITATIVE"] = "QUALITATIVE"
     formula: str | None = None
     assumptions: str | None = None
+    confidence: Literal["LOW", "MEDIUM", "HIGH"] = "MEDIUM"
+
+
+class DemoPlanSettingsUpsert(BaseModel):
+    audience: str = Field(default="", max_length=4000)
+    duration_minutes: int = Field(default=45, ge=10, le=480)
+    additional_priorities: str = Field(default="", max_length=10000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class DemoSectionPriorityUpsert(BaseModel):
+    priority: Literal["MUST_SHOW", "SHOULD_SHOW", "OPTIONAL", "DO_NOT_SHOW"] = "OPTIONAL"
+    user_notes: str = Field(default="", max_length=10000)
+    constraints: str = Field(default="", max_length=10000)
+    estimated_minutes: int | None = Field(default=None, ge=1, le=240)
+    expected_version: int | None = Field(default=None, ge=1)
 
 
 class ReviewDecision(BaseModel):
     decision: Literal["APPROVED", "REJECTED"]
     note: str | None = None
+    selected_item_indexes: list[int] = Field(default_factory=list, max_length=100)
 
 
 class ValidationRequest(BaseModel):
@@ -188,6 +217,8 @@ class AiRequest(BaseModel):
         "ATTACHMENT_REVIEW",
         "OBSERVATION_ENHANCEMENT",
         "SOLUTION_APPROACH",
+        "TARGETED_BENEFITS",
+        "DEMO_PLAN",
     ]
     instructions: str | None = Field(default=None, max_length=4000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)

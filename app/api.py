@@ -20,7 +20,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .access import accessible_prospect_ids, require_prospect_access, require_report_access
-from .ai_service import build_observation_snapshot, build_solution_snapshot, evaluate_policy
+from .ai_service import (
+    build_demo_plan_snapshot,
+    build_observation_snapshot,
+    build_solution_snapshot,
+    build_targeted_benefits_snapshot,
+    evaluate_policy,
+)
 from .audit import audit
 from .auth import (
     authenticate,
@@ -51,6 +57,9 @@ from .models import (
     Capability,
     CapabilityMapping,
     Comment,
+    DemoPlanSettings,
+    DemoPlanVersion,
+    DemoSectionPriority,
     Engagement,
     EngagementMember,
     EvidenceItem,
@@ -81,6 +90,8 @@ from .schemas import (
     AiRequest,
     BenefitCreate,
     BrandingUpdate,
+    DemoPlanSettingsUpsert,
+    DemoSectionPriorityUpsert,
     CapabilityCreate,
     CapabilityMappingCreate,
     CapabilityUpdate,
@@ -161,6 +172,81 @@ def _next_content_version(db: Session, section_id: str, content_type: str = "CUR
         )
     )
     return int(current or 0) + 1
+
+
+def _next_demo_plan_version(db: Session, report_id: str) -> int:
+    current = db.scalar(select(func.max(DemoPlanVersion.version)).where(DemoPlanVersion.report_id == report_id))
+    return int(current or 0) + 1
+
+
+def _resolve_benefit_source(
+    db: Session,
+    report: Report,
+    *,
+    section_id: str | None,
+    finding_id: str | None,
+    capability_mapping_id: str | None,
+    source_ref: str | None,
+) -> dict[str, Any]:
+    if capability_mapping_id:
+        mapping = db.get(CapabilityMapping, capability_mapping_id)
+        if not mapping or mapping.report_id != report.id:
+            raise HTTPException(400, "Capability mapping is not available in this report.")
+        capability = db.get(Capability, mapping.capability_id)
+        return {
+            "section_id": mapping.section_id,
+            "finding_id": mapping.finding_id,
+            "capability_mapping_id": mapping.id,
+            "source_ref": f"mapping:{mapping.id}",
+            "source_type": "CAPABILITY_MAPPING",
+            "source_label": f"{capability.capability_code} — {capability.name}" if capability else (mapping.source_label or "Approved capability mapping"),
+            "source_statement": mapping.rationale,
+        }
+    ref = (source_ref or "").strip()
+    if finding_id or ref.startswith("finding:") or ref == "section:narrative" or ref.startswith("response:"):
+        source = _resolve_mapping_source(
+            db,
+            report,
+            section_id=section_id,
+            source_ref=ref or None,
+            finding_id=finding_id,
+        )
+        source["capability_mapping_id"] = None
+        return source
+    if ref.startswith("metric:"):
+        metric = db.get(Metric, ref.split(":", 1)[1])
+        if not metric or metric.report_id != report.id or (section_id and metric.section_id != section_id):
+            raise HTTPException(400, "Metric is not available in the selected section.")
+        value = metric.value_text if metric.value_text is not None else metric.value_numeric
+        statement = f"{metric.name}: {value if value is not None else 'value not recorded'}{f' {metric.unit}' if metric.unit else ''}"
+        return {
+            "section_id": metric.section_id,
+            "finding_id": None,
+            "capability_mapping_id": None,
+            "source_ref": ref,
+            "source_type": "METRIC",
+            "source_label": metric.name,
+            "source_statement": statement,
+        }
+    if ref.startswith("solution:"):
+        solution = db.get(SectionContentVersion, ref.split(":", 1)[1])
+        if (
+            not solution
+            or solution.report_id != report.id
+            or solution.content_type != "CLOUD_INVENTORY_APPROACH"
+            or (section_id and solution.section_id != section_id)
+        ):
+            raise HTTPException(400, "Cloud Inventory approach source is not available in this section.")
+        return {
+            "section_id": solution.section_id,
+            "finding_id": None,
+            "capability_mapping_id": None,
+            "source_ref": ref,
+            "source_type": "SOLUTION_APPROACH",
+            "source_label": "Accepted Cloud Inventory approach",
+            "source_statement": solution.text,
+        }
+    raise HTTPException(400, "Select an operational observation, approved capability mapping, accepted approach, or metric as the benefit basis.")
 
 
 def _object_storage_or_503(settings: Settings) -> ObjectStorage:
@@ -840,6 +926,13 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     evidence = db.execute(select(EvidenceItem, FileObject).join(FileObject, FileObject.evidence_id == EvidenceItem.id, isouter=True).where(EvidenceItem.report_id == report.id).order_by(EvidenceItem.created_at)).all()
     capabilities = db.execute(select(CapabilityMapping, Capability).join(Capability, CapabilityMapping.capability_id == Capability.id).where(CapabilityMapping.report_id == report.id)).all()
     benefits = list(db.scalars(select(Benefit).where(Benefit.report_id == report.id).order_by(Benefit.created_at)).all())
+    demo_settings = db.get(DemoPlanSettings, report.id)
+    demo_priorities = list(db.scalars(select(DemoSectionPriority).where(DemoSectionPriority.report_id == report.id)).all())
+    demo_plan = db.scalar(
+        select(DemoPlanVersion)
+        .where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))
+        .order_by(DemoPlanVersion.version.desc())
+    )
     suggestions = list(db.scalars(select(AiSuggestion).where(AiSuggestion.report_id == report.id).order_by(AiSuggestion.created_at.desc())).all())
     solution_versions = list(
         db.scalars(
@@ -891,7 +984,31 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
             "rationale": m.rationale, "prerequisites": m.prerequisites, "approval_state": m.approval_state,
             "ai_suggestion_id": m.ai_suggestion_id,
         } for m, c in capabilities],
-        "benefits": [{"id": b.id, "finding_id": b.finding_id, "capability_mapping_id": b.capability_mapping_id, "statement": b.statement, "measure_type": b.measure_type, "formula": b.formula, "assumptions": b.assumptions, "approval_state": b.approval_state} for b in benefits],
+        "benefits": [{
+            "id": b.id, "section_id": b.section_id, "finding_id": b.finding_id,
+            "capability_mapping_id": b.capability_mapping_id, "source_ref": b.source_ref,
+            "source_type": b.source_type, "source_label": b.source_label,
+            "source_statement": b.source_statement, "statement": b.statement,
+            "category": b.category, "measure_type": b.measure_type, "formula": b.formula,
+            "assumptions": b.assumptions, "confidence": b.confidence,
+            "approval_state": b.approval_state, "ai_suggestion_id": b.ai_suggestion_id,
+        } for b in benefits],
+        "demo_settings": {
+            "audience": demo_settings.audience if demo_settings else "",
+            "duration_minutes": demo_settings.duration_minutes if demo_settings else 45,
+            "additional_priorities": demo_settings.additional_priorities if demo_settings else "",
+            "version": demo_settings.version if demo_settings else None,
+        },
+        "demo_section_priorities": [{
+            "id": item.id, "section_id": item.section_id, "priority": item.priority,
+            "user_notes": item.user_notes, "constraints": item.constraints,
+            "estimated_minutes": item.estimated_minutes, "version": item.version,
+        } for item in demo_priorities],
+        "demo_plan": None if not demo_plan else {
+            "id": demo_plan.id, "version": demo_plan.version, "content": demo_plan.content,
+            "source_type": demo_plan.source_type, "source_refs": demo_plan.source_refs,
+            "created_at": _iso(demo_plan.created_at),
+        },
         "ai_suggestions": [{"id": s.id, "section_id": s.section_id, "purpose": s.purpose, "content": s.content, "source_refs": s.source_refs, "confidence": s.confidence, "review_state": s.review_state, "reviewed_at": _iso(s.reviewed_at), "created_at": _iso(s.created_at)} for s in suggestions],
         "publications": [
             {
@@ -1384,12 +1501,50 @@ def review_mapping(report_id: str, mapping_id: str, payload: ReviewDecision, use
 def create_benefit(report_id: str, payload: BenefitCreate, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
     report = _get_report(db, report_id)
     require_report_access(db, user, report)
-    benefit = Benefit(report_id=report.id, created_by=user.id, **payload.model_dump())
+    source = _resolve_benefit_source(
+        db,
+        report,
+        section_id=payload.section_id,
+        finding_id=payload.finding_id,
+        capability_mapping_id=payload.capability_mapping_id,
+        source_ref=payload.source_ref,
+    )
+    if payload.measure_type == "QUANTITATIVE":
+        if source["source_type"] != "METRIC":
+            raise HTTPException(400, "Quantitative benefits must be based on a recorded metric.")
+        if not payload.formula or not payload.assumptions:
+            raise HTTPException(400, "Quantitative benefits require a measurement formula and explicit assumptions.")
+    benefit = Benefit(
+        report_id=report.id,
+        section_id=source["section_id"],
+        finding_id=source["finding_id"],
+        capability_mapping_id=source["capability_mapping_id"],
+        source_ref=source["source_ref"],
+        source_type=source["source_type"],
+        source_label=source["source_label"],
+        source_statement=source["source_statement"],
+        statement=payload.statement,
+        category=payload.category,
+        measure_type=payload.measure_type,
+        formula=payload.formula,
+        assumptions=payload.assumptions,
+        confidence=payload.confidence,
+        approval_state="PENDING",
+        created_by=user.id,
+    )
     db.add(benefit)
     _increment_report(report)
-    audit(db, actor=user, action="BENEFIT_CREATED", target_type="BENEFIT", target_id=benefit.id, prospect_id=report.prospect_id, metadata={"report_id": report.id})
+    audit(
+        db,
+        actor=user,
+        action="BENEFIT_CREATED",
+        target_type="BENEFIT",
+        target_id=benefit.id,
+        prospect_id=report.prospect_id,
+        metadata={"report_id": report.id, "section_id": benefit.section_id, "source_ref": benefit.source_ref},
+    )
     db.commit()
-    return {"id": benefit.id}
+    return {"id": benefit.id, "approval_state": benefit.approval_state}
 
 
 @router.post("/reports/{report_id}/benefits/{benefit_id}/review", dependencies=[Depends(require_csrf)])
@@ -1400,11 +1555,93 @@ def review_benefit(report_id: str, benefit_id: str, payload: ReviewDecision, use
     if not benefit or benefit.report_id != report.id:
         raise HTTPException(404, "Benefit not found.")
     benefit.approval_state = payload.decision
-    db.add(Approval(report_id=report.id, target_type="BENEFIT", target_id=benefit.id, target_version=1, decision=payload.decision, decided_by=user.id, note=payload.note))
+    benefit.approved_by = user.id if payload.decision == "APPROVED" else None
+    db.add(Approval(report_id=report.id, section_id=benefit.section_id, target_type="BENEFIT", target_id=benefit.id, target_version=1, decision=payload.decision, decided_by=user.id, note=payload.note))
     _increment_report(report)
     audit(db, actor=user, action="BENEFIT_REVIEWED", target_type="BENEFIT", target_id=benefit.id, prospect_id=report.prospect_id, metadata={"decision": payload.decision})
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "approval_state": benefit.approval_state}
+
+
+@router.put("/reports/{report_id}/demo-settings", dependencies=[Depends(require_csrf)])
+def upsert_demo_settings(
+    report_id: str,
+    payload: DemoPlanSettingsUpsert,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    item = db.get(DemoPlanSettings, report.id)
+    if item:
+        if payload.expected_version is not None and payload.expected_version != item.version:
+            raise HTTPException(409, detail={"message": "Demo settings changed in another session.", "current_version": item.version})
+        item.audience = payload.audience
+        item.duration_minutes = payload.duration_minutes
+        item.additional_priorities = payload.additional_priorities
+        item.version += 1
+        item.updated_by = user.id
+    else:
+        if payload.expected_version not in {None, 0}:
+            raise HTTPException(409, detail={"message": "Demo settings do not yet exist.", "current_version": None})
+        item = DemoPlanSettings(
+            report_id=report.id,
+            audience=payload.audience,
+            duration_minutes=payload.duration_minutes,
+            additional_priorities=payload.additional_priorities,
+            version=1,
+            updated_by=user.id,
+        )
+        db.add(item)
+    _increment_report(report)
+    audit(db, actor=user, action="DEMO_SETTINGS_UPDATED", target_type="REPORT", target_id=report.id, prospect_id=report.prospect_id, metadata={"version": item.version})
+    db.commit()
+    return {"audience": item.audience, "duration_minutes": item.duration_minutes, "additional_priorities": item.additional_priorities, "version": item.version, "report_revision": report.revision}
+
+
+@router.put("/reports/{report_id}/sections/{section_id}/demo-priority", dependencies=[Depends(require_csrf)])
+def upsert_demo_section_priority(
+    report_id: str,
+    section_id: str,
+    payload: DemoSectionPriorityUpsert,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    section = _get_section(db, section_id)
+    if section.report_id != report.id:
+        raise HTTPException(404, "Section not found.")
+    item = db.scalar(select(DemoSectionPriority).where(DemoSectionPriority.report_id == report.id, DemoSectionPriority.section_id == section.id))
+    if item:
+        if payload.expected_version is not None and payload.expected_version != item.version:
+            raise HTTPException(409, detail={"message": "Demo priority changed in another session.", "current_version": item.version})
+        item.priority = payload.priority
+        item.user_notes = payload.user_notes
+        item.constraints = payload.constraints
+        item.estimated_minutes = payload.estimated_minutes
+        item.version += 1
+        item.updated_by = user.id
+    else:
+        item = DemoSectionPriority(
+            report_id=report.id, section_id=section.id, priority=payload.priority,
+            user_notes=payload.user_notes, constraints=payload.constraints,
+            estimated_minutes=payload.estimated_minutes, version=1, updated_by=user.id,
+        )
+        db.add(item)
+    _increment_report(report)
+    audit(db, actor=user, action="DEMO_SECTION_PRIORITY_UPDATED", target_type="REPORT_SECTION", target_id=section.id, prospect_id=report.prospect_id, metadata={"priority": item.priority, "version": item.version})
+    db.commit()
+    return {"id": item.id, "section_id": item.section_id, "priority": item.priority, "user_notes": item.user_notes, "constraints": item.constraints, "estimated_minutes": item.estimated_minutes, "version": item.version, "report_revision": report.revision}
+
+
+@router.get("/reports/{report_id}/demo-plan-versions")
+def list_demo_plan_versions(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    items = list(db.scalars(select(DemoPlanVersion).where(DemoPlanVersion.report_id == report.id).order_by(DemoPlanVersion.version.desc())).all())
+    return [{"id": item.id, "version": item.version, "content": item.content, "source_type": item.source_type, "source_refs": item.source_refs, "is_current": item.is_current, "created_at": _iso(item.created_at)} for item in items]
+
 
 
 def _validate_evidence_upload(data: bytes, filename: str, mime_type: str) -> None:
@@ -1776,6 +2013,34 @@ def request_ai(
             raise HTTPException(409, "Enter current operations notes, guided responses, or findings before generating a Cloud Inventory approach.")
         if not context_snapshot.get("approved_capabilities"):
             raise HTTPException(409, "No approved Cloud Inventory capabilities are available for this operational area. Review the capability catalog first.")
+    elif payload.purpose == "TARGETED_BENEFITS":
+        if not section:
+            raise HTTPException(400, "Targeted benefit generation requires a report section.")
+        if payload.parent_suggestion_id:
+            parent_suggestion = db.get(AiSuggestion, payload.parent_suggestion_id)
+            if (
+                not parent_suggestion
+                or parent_suggestion.report_id != report.id
+                or parent_suggestion.section_id != section.id
+                or parent_suggestion.purpose != "TARGETED_BENEFITS"
+            ):
+                raise HTTPException(400, "Parent targeted-benefit suggestion does not belong to this section.")
+        context_snapshot = build_targeted_benefits_snapshot(db, report, section)
+        if not context_snapshot.get("operational_sources"):
+            raise HTTPException(409, "Enter current operations notes or findings before generating targeted benefits.")
+        if not context_snapshot.get("solution") and not context_snapshot.get("approved_mappings"):
+            raise HTTPException(409, "Enter or accept a Cloud Inventory approach, or approve a capability mapping, before generating targeted benefits.")
+    elif payload.purpose == "DEMO_PLAN":
+        if section:
+            raise HTTPException(400, "Demo-plan generation is report-level and must not specify a section.")
+        if payload.parent_suggestion_id:
+            parent_suggestion = db.get(AiSuggestion, payload.parent_suggestion_id)
+            if not parent_suggestion or parent_suggestion.report_id != report.id or parent_suggestion.purpose != "DEMO_PLAN":
+                raise HTTPException(400, "Parent demo-plan suggestion does not belong to this report.")
+        context_snapshot = build_demo_plan_snapshot(db, report)
+        eligible = [item for item in context_snapshot.get("sections") or [] if item.get("priority") != "DO_NOT_SHOW" and item.get("approved_mappings")]
+        if not eligible:
+            raise HTTPException(409, "Approve at least one capability mapping before generating a demo plan.")
 
     decision = evaluate_policy(settings, contains_prospect_confidential_content=True)
     job = AiJob(
@@ -1822,7 +2087,12 @@ def request_ai(
         },
     )
     db.commit()
-    message = "Cloud Inventory approach queued for generation and human review." if payload.purpose == "SOLUTION_APPROACH" else "AI enhancement queued for generation and human review."
+    messages = {
+        "SOLUTION_APPROACH": "Cloud Inventory approach queued for generation and human review.",
+        "TARGETED_BENEFITS": "Targeted benefits queued for generation and human review.",
+        "DEMO_PLAN": "Customer-specific demo plan queued for generation and human review.",
+    }
+    message = messages.get(payload.purpose, "AI enhancement queued for generation and human review.")
     return {"ai_job_id": job.id, "status": job.status, "message": message}
 
 
@@ -1873,7 +2143,7 @@ def review_ai(
     # Observation enhancement is equivalent to a collaborative narrative edit,
     # so any report contributor may accept it. Other AI recommendations retain
     # the reviewer requirement.
-    if suggestion.purpose == "OBSERVATION_ENHANCEMENT":
+    if suggestion.purpose in {"OBSERVATION_ENHANCEMENT", "TARGETED_BENEFITS", "DEMO_PLAN"}:
         require_report_access(db, user, report)
     else:
         require_report_access(db, user, report, "REVIEWER")
@@ -1882,7 +2152,7 @@ def review_ai(
     suggestion.reviewed_by = user.id
     suggestion.review_note = payload.note
     suggestion.reviewed_at = utcnow()
-    applied: dict[str, int | bool] = {"narrative": False, "solution": False, "mappings": 0, "benefits": 0}
+    applied: dict[str, int | bool] = {"narrative": False, "solution": False, "mappings": 0, "benefits": 0, "demo_plan": False}
     content = dict(suggestion.content or {})
     if payload.decision == "APPROVED" and not content.get("_applied"):
         target_section = db.get(ReportSection, suggestion.section_id) if suggestion.section_id else None
@@ -2060,6 +2330,75 @@ def review_ai(
             target_section.updated_by = user.id
             applied["solution"] = True
 
+        elif suggestion.purpose == "TARGETED_BENEFITS":
+            if not target_section:
+                raise HTTPException(409, "The target section is no longer available.")
+            if content.get("verification_status") != "PASSED" or not content.get("accept_allowed", False):
+                raise HTTPException(409, "These targeted benefits contain unsupported claims and cannot be accepted. Refine or regenerate them first.")
+            source_version = content.get("source_section_version")
+            if source_version is not None and int(source_version) != target_section.version:
+                raise HTTPException(409, "The section changed after these benefits were generated. Generate new targeted benefits before accepting them.")
+            source_revision = content.get("source_report_revision")
+            if source_revision is not None and int(source_revision) != report.revision:
+                raise HTTPException(409, "The report changed after these benefits were generated. Generate new targeted benefits before accepting them.")
+            snapshot = dict(content.get("source_snapshot") or {})
+            benefits_payload = list(content.get("benefits") or [])
+            selected = set(payload.selected_item_indexes or range(len(benefits_payload)))
+            for index, benefit_payload in enumerate(benefits_payload):
+                if index not in selected or not isinstance(benefit_payload, dict):
+                    continue
+                statement = str(benefit_payload.get("statement") or "").strip()
+                if not statement:
+                    continue
+                source_refs = list(benefit_payload.get("source_refs") or [])
+                primary_ref = next((ref for ref in source_refs if str(ref).startswith("mapping:")), None)
+                if primary_ref is None:
+                    primary_ref = next((ref for ref in source_refs if str(ref).startswith(("finding:", "response:", "section:", "metric:", "solution:"))), None)
+                if not primary_ref:
+                    raise HTTPException(409, "A targeted benefit is no longer linked to a valid report source.")
+                mapping_id = str(primary_ref).split(":", 1)[1] if str(primary_ref).startswith("mapping:") else None
+                source = _resolve_benefit_source(
+                    db, report, section_id=target_section.id, finding_id=None,
+                    capability_mapping_id=mapping_id, source_ref=None if mapping_id else str(primary_ref),
+                )
+                measure_type = str(benefit_payload.get("measure_type") or "QUALITATIVE").upper()
+                formula = str(benefit_payload.get("formula") or "").strip() or None
+                assumptions = str(benefit_payload.get("assumptions") or "").strip() or None
+                if measure_type == "QUANTITATIVE" and (source["source_type"] != "METRIC" or not formula or not assumptions):
+                    raise HTTPException(409, "A quantitative benefit is missing a valid metric, formula, or assumptions.")
+                exists = db.scalar(select(Benefit.id).where(Benefit.report_id == report.id, Benefit.section_id == target_section.id, Benefit.statement == statement))
+                if exists:
+                    continue
+                db.add(Benefit(
+                    report_id=report.id, section_id=target_section.id, finding_id=source["finding_id"],
+                    capability_mapping_id=source["capability_mapping_id"], source_ref=source["source_ref"],
+                    source_type=source["source_type"], source_label=source["source_label"],
+                    source_statement=source["source_statement"], statement=statement,
+                    category=str(benefit_payload.get("category") or "OPERATIONAL_EFFICIENCY").upper(),
+                    measure_type=measure_type, formula=formula, assumptions=assumptions,
+                    confidence=str(benefit_payload.get("confidence") or "MEDIUM").upper(),
+                    approval_state="PENDING", ai_suggestion_id=suggestion.id, created_by=user.id,
+                ))
+                applied["benefits"] = int(applied["benefits"]) + 1
+
+        elif suggestion.purpose == "DEMO_PLAN":
+            if content.get("verification_status") != "PASSED" or not content.get("accept_allowed", False):
+                raise HTTPException(409, "This demo plan contains unsupported claims or priority conflicts and cannot be accepted. Refine or regenerate it first.")
+            source_revision = content.get("source_report_revision")
+            if source_revision is not None and int(source_revision) != report.revision:
+                raise HTTPException(409, "The report changed after this demo plan was generated. Generate a new plan before accepting it.")
+            plan = content.get("demo_plan")
+            if not isinstance(plan, dict) or not plan.get("flow"):
+                raise HTTPException(409, "The AI suggestion does not contain a usable demo plan.")
+            for current in db.scalars(select(DemoPlanVersion).where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))).all():
+                current.is_current = False
+            db.add(DemoPlanVersion(
+                report_id=report.id, version=_next_demo_plan_version(db, report.id),
+                content=plan, source_type="AI_ACCEPTED", source_refs=content.get("source_refs") or [],
+                ai_suggestion_id=suggestion.id, is_current=True, created_by=user.id,
+            ))
+            applied["demo_plan"] = True
+
         elif suggested_text and target_section and suggestion.purpose in {"NARRATIVE", "EXECUTIVE_SUMMARY", "ATTACHMENT_REVIEW"}:
             if suggested_text not in target_section.narrative:
                 target_section.narrative = f"{target_section.narrative.strip()}\n\n{suggested_text}".strip()
@@ -2103,7 +2442,7 @@ def review_ai(
                 )
             )
             applied["mappings"] = int(applied["mappings"]) + 1
-        for benefit_item in content.get("benefit_statements") or []:
+        for benefit_item in ([] if suggestion.purpose == "TARGETED_BENEFITS" else (content.get("benefit_statements") or [])):
             benefit_payload = benefit_item if isinstance(benefit_item, dict) else {"statement": str(benefit_item)}
             statement = str(benefit_payload.get("statement") or benefit_payload.get("text") or "").strip()
             if not statement:

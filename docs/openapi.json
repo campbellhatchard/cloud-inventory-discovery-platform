@@ -1519,6 +1519,36 @@
         "title": "ReviewDecision",
         "type": "object"
       },
+      "SectionContentUpsert": {
+        "properties": {
+          "content_type": {
+            "const": "CLOUD_INVENTORY_APPROACH",
+            "default": "CLOUD_INVENTORY_APPROACH",
+            "title": "Content Type",
+            "type": "string"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 50000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "title": "SectionContentUpsert",
+        "type": "object"
+      },
       "SectionCreate": {
         "properties": {
           "process_module": {
@@ -1770,7 +1800,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.7.0"
+    "version": "0.7.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4319,6 +4349,62 @@
           }
         },
         "summary": "Update Section"
+      }
+    },
+    "/api/reports/{report_id}/sections/{section_id}/content": {
+      "put": {
+        "operationId": "upsert_section_content_api_reports__report_id__sections__section_id__content_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectionContentUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Section Content"
       }
     },
     "/api/reports/{report_id}/sections/{section_id}/content-versions": {

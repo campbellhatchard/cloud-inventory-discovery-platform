@@ -90,6 +90,12 @@ class SectionUpdate(BaseModel):
     expected_version: int | None = Field(default=None, ge=1)
 
 
+class SectionContentUpsert(BaseModel):
+    content_type: Literal["CLOUD_INVENTORY_APPROACH"] = "CLOUD_INVENTORY_APPROACH"
+    text: str = Field(default="", max_length=50000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
 class ResponseUpsert(BaseModel):
     prompt_id: str
     narrative: str = ""

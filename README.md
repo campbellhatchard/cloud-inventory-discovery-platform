@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.7.0
-**Status:** Cloud Inventory Solution Intelligence build; staging validation required
+**Version:** 0.7.1
+**Status:** Manual Cloud Inventory approach entry hotfix; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented

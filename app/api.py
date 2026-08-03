@@ -105,6 +105,7 @@ from .schemas import (
     ReportDeleteRequest,
     ResponseUpsert,
     ReviewDecision,
+    SectionContentUpsert,
     SectionCreate,
     SectionUpdate,
     SiteCreate,
@@ -954,6 +955,116 @@ def list_section_content_versions(
         }
         for item in versions
     ]
+
+
+@router.put("/reports/{report_id}/sections/{section_id}/content", dependencies=[Depends(require_csrf)])
+def upsert_section_content(
+    report_id: str,
+    section_id: str,
+    payload: SectionContentUpsert,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    section = _get_section(db, section_id)
+    if section.report_id != report.id:
+        raise HTTPException(400, "Section does not belong to report.")
+    if not section.process_module:
+        raise HTTPException(400, "Cloud Inventory approach content is only available for operational sections.")
+
+    content_type = payload.content_type.strip().upper()
+    current = db.scalar(
+        select(SectionContentVersion)
+        .where(
+            SectionContentVersion.report_id == report.id,
+            SectionContentVersion.section_id == section.id,
+            SectionContentVersion.content_type == content_type,
+            SectionContentVersion.is_current.is_(True),
+        )
+        .order_by(SectionContentVersion.version.desc())
+    )
+
+    current_version = current.version if current else None
+    if payload.expected_version != current_version:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Cloud Inventory approach was updated by another user.",
+                "current_version": current_version,
+                "current_text": current.text if current else "",
+            },
+        )
+
+    proposed_text = payload.text.strip()
+    if current and current.text == proposed_text:
+        return {
+            "id": current.id,
+            "version": current.version,
+            "text": current.text,
+            "source_type": current.source_type,
+            "created_at": _iso(current.created_at),
+            "section_version": section.version,
+            "report_revision": report.revision,
+            "unchanged": True,
+        }
+
+    for item in db.scalars(
+        select(SectionContentVersion).where(
+            SectionContentVersion.report_id == report.id,
+            SectionContentVersion.section_id == section.id,
+            SectionContentVersion.content_type == content_type,
+            SectionContentVersion.is_current.is_(True),
+        )
+    ).all():
+        item.is_current = False
+
+    version = SectionContentVersion(
+        report_id=report.id,
+        section_id=section.id,
+        content_type=content_type,
+        version=_next_content_version(db, section.id, content_type),
+        text=proposed_text,
+        source_type="USER",
+        source_refs=[{
+            "ref": "manual:cloud-inventory-approach",
+            "label": "Manual Cloud Inventory approach",
+            "type": "MANUAL_ENTRY",
+        }],
+        is_current=True,
+        created_by=user.id,
+    )
+    db.add(version)
+    section.version += 1
+    section.updated_by = user.id
+    _increment_report(report)
+    db.flush()
+    audit(
+        db,
+        actor=user,
+        action="SECTION_CONTENT_MANUAL_SAVED",
+        target_type="SECTION_CONTENT_VERSION",
+        target_id=version.id,
+        prospect_id=report.prospect_id,
+        metadata={
+            "report_id": report.id,
+            "section_id": section.id,
+            "content_type": content_type,
+            "version": version.version,
+            "cleared": not bool(proposed_text),
+        },
+    )
+    db.commit()
+    return {
+        "id": version.id,
+        "version": version.version,
+        "text": version.text,
+        "source_type": version.source_type,
+        "created_at": _iso(version.created_at),
+        "section_version": section.version,
+        "report_revision": report.revision,
+        "unchanged": False,
+    }
 
 
 @router.post("/reports/{report_id}/members", dependencies=[Depends(require_csrf)])

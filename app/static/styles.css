@@ -399,3 +399,7 @@ tr:last-child td { border-bottom: 0; }
 .solution-approach-text { padding:14px 16px; border-left:3px solid var(--accent); background:#f7fbfd; border-radius:8px; margin-bottom:10px; }
 .solution-mapping-summary { margin-top:18px; display:grid; gap:10px; }
 .empty-inline { padding:14px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); background:var(--surface-2); }
+
+/* v0.7.1 manual Cloud Inventory approach entry */
+.solution-approach-editor { min-height:220px; line-height:1.55; }
+#solution-approach-save { min-height:20px; }

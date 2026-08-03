@@ -665,7 +665,7 @@ async function showSolutionApproach(section) {
 
 async function showSolutionContentHistory(section) {
   const versions = await api(`/api/reports/${state.report.report.id}/sections/${section.id}/content-versions?content_type=CLOUD_INVENTORY_APPROACH`);
-  showModal('Cloud Inventory Approach Version History', versions.length ? `<div class="version-history">${versions.map(item => `<article class="finding"><div class="section-head"><div><strong>Version ${item.version}</strong><div class="card-meta"><span>${esc(item.source_type.replaceAll('_',' '))}</span><span>${esc(fmtDateTime(item.created_at))}</span></div></div>${item.is_current ? '<span class="badge badge-success">CURRENT</span>' : ''}</div><p class="version-text">${esc(item.text || '(blank)').replaceAll('\n','<br>')}</p></article>`).join('')}</div>` : '<p>No accepted Cloud Inventory approach history exists for this section yet.</p>', '');
+  showModal('Cloud Inventory Approach Version History', versions.length ? `<div class="version-history">${versions.map(item => `<article class="finding"><div class="section-head"><div><strong>Version ${item.version}</strong><div class="card-meta"><span>${esc(item.source_type.replaceAll('_',' '))}</span><span>${esc(fmtDateTime(item.created_at))}</span></div></div>${item.is_current ? '<span class="badge badge-success">CURRENT</span>' : ''}</div><p class="version-text">${esc(item.text || '(blank)').replaceAll('\n','<br>')}</p></article>`).join('')}</div>` : '<p>No saved Cloud Inventory approach history exists for this section yet.</p>', '');
 }
 
 function speakAiText() {
@@ -702,7 +702,7 @@ function reportSectionContent(section) {
       <div class="prompt-list">${prompts.map(p => { const r=answered.get(p.id); return `<article class="prompt-card"><div class="prompt-question"><span>${esc(p.question)}</span></div>${p.answer_type==='PHOTO'?`<button class="btn btn-ghost btn-small" data-action="section-upload-photo">Add photo to this section</button>`:`<textarea class="prompt-answer" data-prompt-id="${p.id}" data-response-version="${r?.version || ''}" placeholder="Capture the answer, facts, assumptions, and examples.">${esc(r?.narrative || '')}</textarea><div class="save-state" data-save-for="${p.id}"></div>`}</article>`; }).join('')}</div>
     </section>
     <section class="card" id="findings"><div class="section-head"><div><h2>Findings</h2><p class="help">Use a formal finding when you want to classify an Observation, Pain Point, Risk, Gap, Strength, or Opportunity. General current-operations notes and guided responses are automatically treated as <strong>Observations</strong> when assessing Cloud Inventory functionality; they do not need to be duplicated here.</p></div><button class="btn btn-ghost btn-small" data-action="new-finding">Add detailed finding</button></div>${findings.map(f => `<article class="finding"><div class="card-meta"><span class="badge">${esc(f.finding_type.replaceAll('_',' '))}</span><span>Confidence: ${esc(f.confidence)}</span></div><p>${esc(f.statement)}</p>${f.impact?`<p class="impact"><strong>Impact:</strong> ${esc(f.impact)}</p>`:''}</article>`).join('') || '<p class="help">No specifically classified findings have been captured for this section.</p>'}${generalObservations.length?`<div class="general-observation-summary"><strong>${generalObservations.length} general note${generalObservations.length===1?'':'s'} available as Observations for functionality mapping</strong><ul>${generalObservations.slice(0,6).map(item=>`<li>${esc(item.label.replace('Observation — ',''))}: ${esc(item.statement.slice(0,180))}${item.statement.length>180?'…':''}</li>`).join('')}</ul></div>`:''}</section>
-    ${section.process_module ? `<section class="card" id="cloud-inventory-approach"><div class="section-head"><div><h2>Cloud Inventory Approach</h2><p class="help">Explain how approved Cloud Inventory capabilities can support the operation observed in this section. AI generation uses approved product references and approved historical knowledge only.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="generate-solution-approach" ${solutionEnabled?'':'disabled'} title="${esc(solutionEnabled ? 'Generate a source-grounded Cloud Inventory approach' : (state.aiStatus?.policy?.reason || (!approvedCapabilityCount ? 'No approved Cloud Inventory capabilities are available.' : 'Enter operational observations before generating an approach.')))}">${approach?.text ? 'Regenerate with AI' : 'Generate with AI'}</button><button class="btn btn-ghost btn-small" data-action="solution-version-history">Version history</button><button class="btn btn-ghost btn-small" data-action="map-capability" ${sectionObservationSources(section).length?'':'disabled'}>Map approved capability</button></div></div>${approach?.text?`<div class="compiled-narrative solution-approach-text">${esc(approach.text).replaceAll('\n','<br>')}</div><div class="card-meta"><span class="badge badge-success">ACCEPTED</span><span>Version ${esc(approach.version)}</span><span>${esc(fmtDateTime(approach.created_at))}</span></div>`:'<div class="empty-inline"><p>No Cloud Inventory approach has been accepted for this operational area yet.</p></div>'}${approvedMappings.length?`<div class="solution-mapping-summary"><strong>Approved functionality mappings</strong>${approvedMappings.map(item=>`<div class="finding"><div class="card-meta"><span class="badge badge-success">${esc(item.capability_code)}</span><span>${esc(item.source_label || 'Operational observation')}</span></div><strong>${esc(item.capability_name)}</strong><p>${esc(item.rationale)}</p></div>`).join('')}</div>`:''}</section>` : ''}
+    ${section.process_module ? `<section class="card" id="cloud-inventory-approach"><div class="section-head"><div><h2>Cloud Inventory Approach</h2><p class="help">Type the Cloud Inventory approach directly, map approved capabilities to operational observations, generate a source-grounded response with AI, or use any combination of these methods. AI generation uses approved product references and approved historical knowledge only.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="generate-solution-approach" ${solutionEnabled?'':'disabled'} title="${esc(solutionEnabled ? 'Generate or improve a source-grounded Cloud Inventory approach' : (state.aiStatus?.policy?.reason || (!approvedCapabilityCount ? 'No approved Cloud Inventory capabilities are available.' : 'Enter operational observations before generating an approach.')))}">${approach?.text ? 'Enhance with AI' : 'Generate with AI'}</button><button class="btn btn-ghost btn-small" data-action="solution-version-history">Version history</button><button class="btn btn-ghost btn-small" data-action="map-capability" ${sectionObservationSources(section).length?'':'disabled'}>Map approved capability</button></div></div><div class="field"><label for="cloud-inventory-approach-editor">Cloud Inventory approach narrative</label><textarea id="cloud-inventory-approach-editor" class="editor solution-approach-editor" data-section-id="${section.id}" data-content-version="${approach?.version || ''}" placeholder="Describe how Cloud Inventory will support this operational area. You can type directly, map approved capabilities, or use Generate with AI. Autosaves after you stop typing.">${esc(approach?.text || '')}</textarea><div id="solution-approach-save" class="save-state">${approach ? `${esc(approach.source_type.replaceAll('_',' '))} · Version ${esc(approach.version)} · ${esc(fmtDateTime(approach.created_at))}` : ''}</div></div>${approvedMappings.length?`<div class="solution-mapping-summary"><strong>Approved functionality mappings</strong>${approvedMappings.map(item=>`<div class="finding"><div class="card-meta"><span class="badge badge-success">${esc(item.capability_code)}</span><span>${esc(item.source_label || 'Operational observation')}</span></div><strong>${esc(item.capability_name)}</strong><p>${esc(item.rationale)}</p></div>`).join('')}</div>`:''}</section>` : ''}
     <section class="card" id="photos"><div class="section-head"><div><h2>Site photographs and attachments</h2><p class="help">Upload photographs directly to this operational section. Evidence routed from Quick Entry also appears here for review, AI enhancement, and publication.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="section-upload-photo">Add photographs</button><button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button></div></div><div class="evidence-grid">${evidence.map(e => `<article class="evidence-card"><div class="evidence-thumb">${e.file?.mime_type?.startsWith('image/')?`<img src="/api/files/${e.file.id}?inline=true" alt="${esc(e.caption || e.file.file_name)}" loading="lazy">`:'Attachment'}</div><div class="evidence-body"><strong>${esc(e.caption || e.file?.file_name || 'Evidence')}</strong><div class="card-meta"><span>${esc(e.placement)}</span><span>${e.file?bytes(e.file.size_bytes):''}</span><span class="badge">${esc(e.extraction_state || 'NOT APPLICABLE')}</span></div>${e.file?`<a href="/api/files/${e.file.id}" target="_blank">Open file</a>`:''}${canReview(report.access_scope)?`<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="true">Include</button><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="false">Supporting only</button></div>`:''}</div></article>`).join('') || '<p class="help">No site photographs have been added to this section yet.</p>'}</div></section>`;
 }
 
@@ -849,6 +849,62 @@ function scheduleNarrativeSave(sectionId, value, statusElement) {
     }
   }, 900);
   state.saveTimers.set(`section:${sectionId}`, timer);
+}
+
+async function saveSolutionApproach(sectionId, value, statusElement) {
+  const section = state.report.sections.find(item => item.id === sectionId);
+  const expectedVersion = section?.cloud_inventory_approach?.version ?? null;
+  try {
+    if (statusElement) statusElement.textContent = 'Saving...';
+    const result = await api(`/api/reports/${state.report.report.id}/sections/${sectionId}/content`, {
+      method:'PUT',
+      body:{
+        content_type:'CLOUD_INVENTORY_APPROACH',
+        text:value,
+        expected_version:expectedVersion,
+      },
+    });
+    if (statusElement) statusElement.textContent = result.offlineQueued ? 'Queued offline' : 'Saved';
+    if (section && !result.offlineQueued) {
+      section.cloud_inventory_approach = {
+        id:result.id,
+        version:result.version,
+        text:result.text,
+        source_type:result.source_type,
+        source_refs:[],
+        created_at:result.created_at,
+      };
+      section.version = result.section_version;
+      state.report.report.revision = result.report_revision;
+    }
+    return result;
+  } catch (error) {
+    if (statusElement) statusElement.textContent = error.status === 409 ? 'Conflict - reloading' : 'Save failed';
+    toast(error.status === 409 ? 'The Cloud Inventory approach changed in another session. The latest version is being loaded.' : error.message, 'error');
+    if (error.status === 409) setTimeout(() => renderReport(state.report.report.id, sectionId), 350);
+    throw error;
+  }
+}
+
+function scheduleSolutionApproachSave(sectionId, value, statusElement) {
+  const key = `solution:${sectionId}`;
+  clearTimeout(state.saveTimers.get(key));
+  if (statusElement) statusElement.textContent = 'Unsaved changes...';
+  const timer = setTimeout(() => {
+    saveSolutionApproach(sectionId, value, statusElement).catch(() => {});
+  }, 900);
+  state.saveTimers.set(key, timer);
+}
+
+async function flushSolutionApproachSave(section) {
+  const editor = document.getElementById('cloud-inventory-approach-editor');
+  if (!editor || !section) return;
+  const key = `solution:${section.id}`;
+  clearTimeout(state.saveTimers.get(key));
+  state.saveTimers.delete(key);
+  const currentText = section.cloud_inventory_approach?.text || '';
+  if (editor.value.trim() === currentText.trim()) return;
+  await saveSolutionApproach(section.id, editor.value, document.getElementById('solution-approach-save'));
 }
 
 function schedulePromptSave(sectionId, promptId, value, statusElement) {
@@ -1194,7 +1250,7 @@ async function handleClick(event) {
     if(action==='resolve-comment'){await api(`/api/reports/${reportId}/comments/${target.dataset.id}/resolve`,{method:'POST'});renderReport(reportId,section.id);return;}
     if(action==='ai-enhance-observations'){await showAiEnhancement(section);return;}
     if(action==='section-version-history'){await showSectionContentHistory(section);return;}
-    if(action==='generate-solution-approach'){await showSolutionApproach(section);return;}
+    if(action==='generate-solution-approach'){await flushSolutionApproachSave(section);await showSolutionApproach(section);return;}
     if(action==='solution-version-history'){await showSolutionContentHistory(section);return;}
     if(action==='speak-ai-text'){speakAiText();return;}
     if(action==='refine-ai-enhancement'){await requestAiEnhancement(section,target.dataset.suggestionId);return;}
@@ -1234,6 +1290,7 @@ async function handleChange(event) {
 function handleInput(event) {
   const target=event.target;
   if(target.id==='section-narrative'){scheduleNarrativeSave(target.dataset.sectionId,target.value,document.getElementById('narrative-save'));}
+  if(target.id==='cloud-inventory-approach-editor'){scheduleSolutionApproachSave(target.dataset.sectionId,target.value,document.getElementById('solution-approach-save'));}
   if(target.classList.contains('prompt-answer')){const section=selectedSection();const status=document.querySelector(`[data-save-for="${target.dataset.promptId}"]`);schedulePromptSave(section.id,target.dataset.promptId,target.value,status);}
 }
 

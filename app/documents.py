@@ -269,7 +269,17 @@ def _add_logo(doc: Document, logo_path: Path | None, width: float = 2.0) -> None
         p.add_run().add_picture(str(logo_path), width=Inches(width))
 
 
-def _add_cover(doc: Document, report: Report, prospect: Prospect, site: Site | None, engagement: Engagement, brand: BrandingProfile, logo_path: Path | None, is_final: bool) -> None:
+def _add_cover(
+    doc: Document,
+    report: Report,
+    prospect: Prospect,
+    site: Site | None,
+    engagement: Engagement,
+    brand: BrandingProfile,
+    logo_path: Path | None,
+    prospect_logo_path: Path | None,
+    is_final: bool,
+) -> None:
     _add_logo(doc, logo_path, 2.3)
     doc.add_paragraph()
     title = doc.add_paragraph()
@@ -283,6 +293,14 @@ def _add_cover(doc: Document, report: Report, prospect: Prospect, site: Site | N
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle.add_run("Site Discovery Report").bold = True
     subtitle.runs[0].font.size = Pt(18)
+    prospect_name = doc.add_paragraph()
+    prospect_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    prospect_run = prospect_name.add_run(prospect.name)
+    prospect_run.bold = True
+    prospect_run.font.name = brand.heading_font
+    prospect_run.font.size = Pt(15)
+    if prospect_logo_path and prospect_logo_path.exists():
+        _add_logo(doc, prospect_logo_path, 1.55)
     doc.add_paragraph()
     info = doc.add_table(rows=4, cols=2)
     info.style = "Table Grid"
@@ -360,7 +378,34 @@ def _image_bytes_to_file(data: bytes, suffix: str = ".jpg") -> Path:
     return p
 
 
-def _add_evidence(doc: Document, db: Session, storage: ObjectStorage | None, evidence: Iterable[EvidenceItem]) -> None:
+def _photo_dimensions_inches(brand: BrandingProfile, width: int, height: int) -> tuple[float, float]:
+    unit_factor = 1.0 if brand.photo_size_uom == "INCHES" else 1 / 2.54
+    if width >= height:
+        box_width = float(brand.landscape_photo_width) * unit_factor
+        box_height = float(brand.landscape_photo_height) * unit_factor
+    else:
+        box_width = float(brand.portrait_photo_width) * unit_factor
+        box_height = float(brand.portrait_photo_height) * unit_factor
+    box_width = min(max(box_width, 0.5), 6.7)
+    box_height = min(max(box_height, 0.5), 8.5)
+    image_ratio = width / height if height else 1.0
+    box_ratio = box_width / box_height if box_height else image_ratio
+    if image_ratio >= box_ratio:
+        output_width = box_width
+        output_height = box_width / image_ratio if image_ratio else box_height
+    else:
+        output_height = box_height
+        output_width = box_height * image_ratio
+    return max(output_width, 0.25), max(output_height, 0.25)
+
+
+def _add_evidence(
+    doc: Document,
+    db: Session,
+    storage: ObjectStorage | None,
+    evidence: Iterable[EvidenceItem],
+    brand: BrandingProfile,
+) -> None:
     for item in evidence:
         file_obj = db.scalar(select(FileObject).where(FileObject.evidence_id == item.id, FileObject.variant.in_(["WEB", "ORIGINAL"])).order_by(FileObject.variant.desc()))
         if not file_obj:
@@ -376,11 +421,14 @@ def _add_evidence(doc: Document, db: Session, storage: ObjectStorage | None, evi
                 try:
                     with Image.open(temp) as image:
                         width, height = image.size
-                    max_width = 6.7
-                    width_inches = min(max_width, max(2.5, max_width if width >= height else 4.2))
+                    width_inches, height_inches = _photo_dimensions_inches(brand, width, height)
                     p = doc.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.add_run().add_picture(str(temp), width=Inches(width_inches))
+                    p.add_run().add_picture(
+                        str(temp),
+                        width=Inches(width_inches),
+                        height=Inches(height_inches),
+                    )
                     cap = doc.add_paragraph(item.caption or file_obj.file_name, style="Evidence Caption")
                     cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 finally:
@@ -504,6 +552,7 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
     cloud_inventory_logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo-for-light-background-v0.4.1.png"
     logo_path = cloud_inventory_logo_path
     custom_logo_path: Path | None = None
+    prospect_logo_path: Path | None = None
     if brand.logo_storage_key and storage is not None:
         try:
             fd, custom_name = tempfile.mkstemp(prefix="ci-discovery-logo-", suffix=".png")
@@ -515,11 +564,21 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
             if custom_logo_path:
                 custom_logo_path.unlink(missing_ok=True)
             custom_logo_path = None
+    if prospect.logo_storage_key and storage is not None:
+        try:
+            fd, prospect_logo_name = tempfile.mkstemp(prefix="ci-discovery-prospect-logo-", suffix=".png")
+            os.close(fd)
+            prospect_logo_path = Path(prospect_logo_name)
+            prospect_logo_path.write_bytes(storage.get_bytes(prospect.logo_storage_key))
+        except Exception:
+            if prospect_logo_path:
+                prospect_logo_path.unlink(missing_ok=True)
+            prospect_logo_path = None
 
     doc = Document()
     _configure_styles(doc, brand)
     _request_field_updates(doc)
-    _add_cover(doc, report, prospect, site, engagement, brand, logo_path, is_final)
+    _add_cover(doc, report, prospect, site, engagement, brand, logo_path, prospect_logo_path, is_final)
     # Start page 2 in a separate section so the footer is guaranteed to appear
     # on every page after the cover, but never on page 1.
     doc.add_section(WD_SECTION.NEW_PAGE)
@@ -682,18 +741,20 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         section_evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.section_id == section.id, EvidenceItem.status.in_(["READY", "AVAILABLE"]), EvidenceItem.placement == "INLINE").order_by(EvidenceItem.created_at)).all())
         if section_evidence:
             doc.add_heading("Site Photographs and Evidence", level=2)
-            _add_evidence(doc, db, storage, section_evidence)
+            _add_evidence(doc, db, storage, section_evidence, brand)
 
     appendix = list(db.scalars(select(EvidenceItem).where(EvidenceItem.report_id == report.id, EvidenceItem.status.in_(["READY", "AVAILABLE"]), EvidenceItem.placement == "APPENDIX").order_by(EvidenceItem.created_at)).all())
     if appendix and publication_type != "FOLLOW_UP_QUESTIONNAIRE":
         doc.add_page_break()
         doc.add_heading("Appendix - Supporting Evidence", level=1)
-        _add_evidence(doc, db, storage, appendix)
+        _add_evidence(doc, db, storage, appendix, brand)
 
     output = io.BytesIO()
     doc.save(output)
     if custom_logo_path:
         custom_logo_path.unlink(missing_ok=True)
+    if prospect_logo_path:
+        prospect_logo_path.unlink(missing_ok=True)
     return output.getvalue()
 
 

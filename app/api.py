@@ -64,6 +64,7 @@ from .models import (
     DemoSectionPriority,
     Engagement,
     EngagementMember,
+    EvidenceAiObservation,
     EvidenceItem,
     FileObject,
     Finding,
@@ -100,6 +101,7 @@ from .schemas import (
     CapabilityUpdate,
     CommentCreate,
     EngagementCreate,
+    EvidenceBulkAction,
     EvidenceReviewRequest,
     FindingCreate,
     LoginRequest,
@@ -937,6 +939,9 @@ def download_draft_pdf(report_id: str, user: User = Depends(enforce_password_cha
 def get_report(report_id: str, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
     report = _get_report(db, report_id)
     scope = require_report_access(db, user, report)
+    prospect = db.get(Prospect, report.prospect_id)
+    if not prospect:
+        raise HTTPException(409, "Report prospect is unavailable.")
     sections = list(db.scalars(select(ReportSection).where(ReportSection.report_id == report.id).order_by(ReportSection.display_order)).all())
     responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.report_id == report.id, PromptDefinition.active.is_(True))).all()
     response_map: dict[str, list[dict[str, Any]]] = {}
@@ -944,7 +949,14 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         response_map.setdefault(response.section_id, []).append({"id": response.id, "prompt_id": prompt.id, "question": prompt.question, "answer_type": prompt.answer_type, "narrative": response.narrative, "payload": response.payload, "version": response.version})
     findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id).order_by(Finding.created_at)).all())
     metrics = list(db.scalars(select(Metric).where(Metric.report_id == report.id).order_by(Metric.created_at)).all())
-    evidence = db.execute(select(EvidenceItem, FileObject).join(FileObject, FileObject.evidence_id == EvidenceItem.id, isouter=True).where(EvidenceItem.report_id == report.id).order_by(EvidenceItem.created_at)).all()
+    evidence_items = list(db.scalars(select(EvidenceItem).where(EvidenceItem.report_id == report.id).order_by(EvidenceItem.created_at)).all())
+    evidence_ids = [item.id for item in evidence_items]
+    evidence_files = list(db.scalars(select(FileObject).where(FileObject.evidence_id.in_(evidence_ids))).all()) if evidence_ids else []
+    files_by_evidence: dict[str, dict[str, FileObject]] = {}
+    for file_obj in evidence_files:
+        if not file_obj.evidence_id:
+            continue
+        files_by_evidence.setdefault(file_obj.evidence_id, {})[file_obj.variant] = file_obj
     capabilities = db.execute(select(CapabilityMapping, Capability).join(Capability, CapabilityMapping.capability_id == Capability.id).where(CapabilityMapping.report_id == report.id)).all()
     benefits = list(db.scalars(select(Benefit).where(Benefit.report_id == report.id).order_by(Benefit.created_at)).all())
     demo_settings = db.get(DemoPlanSettings, report.id)
@@ -996,6 +1008,7 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         prompts_by_module.setdefault(p.process_module or "GENERAL", []).append({"id": p.id, "stable_key": p.stable_key, "question": p.question, "answer_type": p.answer_type, "required_on_final": p.required_on_final, "mobile_priority": p.mobile_priority})
     return {
         "report": {"id": report.id, "prospect_id": report.prospect_id, "engagement_id": report.engagement_id, "site_id": report.site_id, "title": report.title, "report_kind": report.report_kind, "state": report.state, "revision": report.revision, "owner_id": report.owner_id, "updated_at": _iso(report.updated_at)},
+        "prospect": {"id": prospect.id, "name": prospect.name, "logo_url": f"/api/prospects/{prospect.id}/logo" if prospect.logo_storage_key else None},
         "access_scope": scope,
         "executive_summary": None if not executive_summary else {
             "id": executive_summary.id, "version": executive_summary.version, "text": executive_summary.text,
@@ -1025,7 +1038,31 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
         "prompts_by_module": prompts_by_module,
         "findings": [{"id": f.id, "section_id": f.section_id, "finding_type": f.finding_type, "statement": f.statement, "impact": f.impact, "confidence": f.confidence, "status": f.status} for f in findings],
         "metrics": [{"id": m.id, "section_id": m.section_id, "name": m.name, "value_numeric": m.value_numeric, "value_text": m.value_text, "unit": m.unit, "period": m.period, "source": m.source, "confidence": m.confidence} for m in metrics],
-        "evidence": [{"id": e.id, "section_id": e.section_id, "evidence_type": e.evidence_type, "caption": e.caption, "placement": e.placement, "classification": e.classification, "status": e.status, "extraction_state": e.extraction_state, "has_extracted_text": bool(e.extracted_text), "ai_inclusion_recommendation": e.ai_inclusion_recommendation, "file": {"id": f.id, "file_name": f.file_name, "mime_type": f.mime_type, "size_bytes": f.size_bytes, "variant": f.variant} if f else None} for e, f in evidence if not f or f.variant == "ORIGINAL"],
+        "evidence": [{
+            "id": item.id, "section_id": item.section_id, "evidence_type": item.evidence_type,
+            "caption": item.caption, "placement": item.placement, "classification": item.classification,
+            "status": item.status, "extraction_state": item.extraction_state,
+            "has_extracted_text": bool(item.extracted_text),
+            "ai_inclusion_recommendation": item.ai_inclusion_recommendation,
+            "file": None if not files_by_evidence.get(item.id, {}).get("ORIGINAL") else {
+                "id": files_by_evidence[item.id]["ORIGINAL"].id,
+                "file_name": files_by_evidence[item.id]["ORIGINAL"].file_name,
+                "mime_type": files_by_evidence[item.id]["ORIGINAL"].mime_type,
+                "size_bytes": files_by_evidence[item.id]["ORIGINAL"].size_bytes,
+                "variant": files_by_evidence[item.id]["ORIGINAL"].variant,
+                "width": files_by_evidence[item.id]["ORIGINAL"].width,
+                "height": files_by_evidence[item.id]["ORIGINAL"].height,
+            },
+            "preview_file": None if not (files_by_evidence.get(item.id, {}).get("WEB") or files_by_evidence.get(item.id, {}).get("ORIGINAL")) else {
+                "id": (files_by_evidence[item.id].get("WEB") or files_by_evidence[item.id]["ORIGINAL"]).id,
+                "file_name": (files_by_evidence[item.id].get("WEB") or files_by_evidence[item.id]["ORIGINAL"]).file_name,
+                "mime_type": (files_by_evidence[item.id].get("WEB") or files_by_evidence[item.id]["ORIGINAL"]).mime_type,
+                "size_bytes": (files_by_evidence[item.id].get("WEB") or files_by_evidence[item.id]["ORIGINAL"]).size_bytes,
+                "variant": (files_by_evidence[item.id].get("WEB") or files_by_evidence[item.id]["ORIGINAL"]).variant,
+                "width": (files_by_evidence[item.id].get("WEB") or files_by_evidence[item.id]["ORIGINAL"]).width,
+                "height": (files_by_evidence[item.id].get("WEB") or files_by_evidence[item.id]["ORIGINAL"]).height,
+            },
+        } for item in evidence_items],
         "capability_mappings": [{
             "id": m.id, "section_id": m.section_id, "finding_id": m.finding_id, "source_ref": m.source_ref,
             "source_type": m.source_type, "source_label": m.source_label, "source_statement": m.source_statement,
@@ -1897,6 +1934,75 @@ def review_evidence(report_id: str, evidence_id: str, payload: EvidenceReviewReq
     return {"ok": True, "placement": evidence.placement}
 
 
+@router.post("/reports/{report_id}/evidence/bulk", dependencies=[Depends(require_csrf)])
+def bulk_manage_evidence(
+    report_id: str,
+    payload: EvidenceBulkAction,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    items = list(
+        db.scalars(
+            select(EvidenceItem).where(
+                EvidenceItem.report_id == report.id,
+                EvidenceItem.id.in_(payload.evidence_ids),
+            )
+        ).all()
+    )
+    if len(items) != len(set(payload.evidence_ids)):
+        raise HTTPException(404, "One or more selected evidence items are unavailable.")
+
+    touched_section_ids = {item.section_id for item in items if item.section_id}
+    if payload.action == "MOVE":
+        if not payload.target_section_id:
+            raise HTTPException(400, "A destination report section is required.")
+        target = _get_section(db, payload.target_section_id)
+        if target.report_id != report.id or target.state == "REMOVED":
+            raise HTTPException(400, "The destination report section is unavailable.")
+        touched_section_ids.add(target.id)
+        for item in items:
+            item.section_id = target.id
+            observation = db.scalar(select(EvidenceAiObservation).where(EvidenceAiObservation.evidence_id == item.id))
+            if observation:
+                observation.section_id = target.id
+        action_name = "EVIDENCE_BULK_MOVED"
+        metadata = {"report_id": report.id, "evidence_ids": payload.evidence_ids, "target_section_id": target.id}
+    else:
+        storage = _object_storage_or_503(settings)
+        file_objects = list(db.scalars(select(FileObject).where(FileObject.evidence_id.in_(payload.evidence_ids))).all())
+        for file_obj in file_objects:
+            try:
+                storage.delete(file_obj.storage_key)
+            except FileNotFoundError:
+                pass
+            db.delete(file_obj)
+        db.flush()
+        for item in items:
+            db.delete(item)
+        action_name = "EVIDENCE_BULK_DELETED"
+        metadata = {"report_id": report.id, "evidence_ids": payload.evidence_ids, "deleted_count": len(items)}
+
+    for section_id in touched_section_ids:
+        section = db.get(ReportSection, section_id)
+        if section:
+            section.version += 1
+            section.updated_by = user.id
+    _increment_report(report)
+    audit(
+        db, actor=user, action=action_name, target_type="REPORT", target_id=report.id,
+        prospect_id=report.prospect_id, metadata=metadata,
+    )
+    db.commit()
+    return {
+        "ok": True, "action": payload.action, "affected_count": len(items),
+        "target_section_id": payload.target_section_id if payload.action == "MOVE" else None,
+        "report_revision": report.revision,
+    }
+
+
 @router.get("/files/{file_id}")
 def download_file(file_id: str, inline: bool = False, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
     file_obj = db.get(FileObject, file_id)
@@ -1904,12 +2010,17 @@ def download_file(file_id: str, inline: bool = False, user: User = Depends(enfor
         raise HTTPException(404, "File not found.")
     require_prospect_access(db, user, file_obj.prospect_id)
     storage = _object_storage_or_503(settings)
-    url = storage.signed_download_url(file_obj.storage_key, file_obj.file_name, file_obj.mime_type)
-    if url:
-        return RedirectResponse(url)
+    if not inline:
+        url = storage.signed_download_url(file_obj.storage_key, file_obj.file_name, file_obj.mime_type)
+        if url:
+            return RedirectResponse(url)
     data = storage.get_bytes(file_obj.storage_key)
     disposition = "inline" if inline else "attachment"
-    return StreamingResponse(io.BytesIO(data), media_type=file_obj.mime_type, headers={"Content-Disposition": f'{disposition}; filename="{safe_filename(file_obj.file_name)}"'})
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=file_obj.mime_type,
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_filename(file_obj.file_name)}"'},
+    )
 
 
 @router.post("/reports/{report_id}/validate", dependencies=[Depends(require_csrf)])
@@ -2835,7 +2946,19 @@ def get_branding(actor: User = Depends(require_roles("ADMIN")), db: Session = De
     brand = db.scalar(select(BrandingProfile).where(BrandingProfile.is_default.is_(True), BrandingProfile.active.is_(True)).order_by(BrandingProfile.version.desc()))
     if not brand:
         raise HTTPException(404, "Default branding not found.")
-    return {"id": brand.id, "name": brand.name, "version": brand.version, "primary_color": brand.primary_color, "secondary_color": brand.secondary_color, "accent_color": brand.accent_color, "heading_font": brand.heading_font, "body_font": brand.body_font, "confidentiality_text": brand.confidentiality_text, "draft_watermark": brand.draft_watermark, "footer_text": brand.footer_text, "has_custom_logo": bool(brand.logo_storage_key)}
+    return {
+        "id": brand.id, "name": brand.name, "version": brand.version,
+        "primary_color": brand.primary_color, "secondary_color": brand.secondary_color,
+        "accent_color": brand.accent_color, "heading_font": brand.heading_font,
+        "body_font": brand.body_font, "confidentiality_text": brand.confidentiality_text,
+        "draft_watermark": brand.draft_watermark, "footer_text": brand.footer_text,
+        "photo_size_uom": brand.photo_size_uom,
+        "landscape_photo_width": brand.landscape_photo_width,
+        "landscape_photo_height": brand.landscape_photo_height,
+        "portrait_photo_width": brand.portrait_photo_width,
+        "portrait_photo_height": brand.portrait_photo_height,
+        "has_custom_logo": bool(brand.logo_storage_key),
+    }
 
 
 @router.patch("/admin/branding/{brand_id}", dependencies=[Depends(require_csrf)])

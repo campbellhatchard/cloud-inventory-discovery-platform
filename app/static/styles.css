@@ -483,3 +483,116 @@ tr:last-child td { border-bottom: 0; }
     flex-direction: column;
   }
 }
+
+/* v0.8.2 — usability, media workflow, and report navigation */
+.report-page-header {
+  align-items: flex-start;
+}
+.report-prospect-identity {
+  display: grid;
+  justify-items: start;
+  gap: .2rem;
+}
+.report-prospect-identity h1,
+.report-prospect-identity h2,
+.report-prospect-identity p {
+  margin: 0;
+}
+.report-prospect-logo {
+  display: block;
+  width: min(150px, 34vw);
+  height: 76px;
+  margin: .35rem 0 .55rem;
+  object-fit: contain;
+  object-position: left center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 6px;
+}
+.evidence-select-label {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .82rem;
+  font-weight: 700;
+}
+.evidence-select-label input {
+  margin: 0;
+}
+.file-preview-modal {
+  width: min(1000px, 96vw);
+  max-width: 1000px;
+}
+.file-preview {
+  display: grid;
+  place-items: center;
+  gap: .75rem;
+  min-height: 220px;
+  max-height: 72vh;
+  overflow: auto;
+  padding: .75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.file-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 64vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.file-preview iframe {
+  display: block;
+  width: 100%;
+  min-height: 65vh;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+}
+.photo-size-settings fieldset {
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.photo-size-settings legend {
+  padding: 0 .4rem;
+  font-weight: 700;
+}
+.readiness-table table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  font-size: .86rem;
+}
+.readiness-table th,
+.readiness-table td,
+.readiness-table th:not(:first-child),
+.readiness-table td:not(:first-child) {
+  padding: .55rem .4rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.readiness-table th:first-child,
+.readiness-table td:first-child {
+  width: 23%;
+}
+.readiness-table th:nth-child(2),
+.readiness-table td:nth-child(2) {
+  width: 11%;
+}
+.readiness-table th:last-child,
+.readiness-table td:last-child {
+  width: 8%;
+}
+@media (max-width: 900px) {
+  .readiness-table table {
+    min-width: 760px;
+    table-layout: auto;
+  }
+  .report-page-header {
+    gap: 1rem;
+  }
+}

@@ -241,6 +241,17 @@ class BrandingUpdate(BaseModel):
     confidentiality_text: str | None = None
     draft_watermark: str | None = None
     footer_text: str | None = None
+    photo_size_uom: Literal["INCHES", "CENTIMETRES"] | None = None
+    landscape_photo_width: float | None = Field(default=None, gt=0.1, le=30)
+    landscape_photo_height: float | None = Field(default=None, gt=0.1, le=30)
+    portrait_photo_width: float | None = Field(default=None, gt=0.1, le=30)
+    portrait_photo_height: float | None = Field(default=None, gt=0.1, le=30)
+
+
+class EvidenceBulkAction(BaseModel):
+    action: Literal["MOVE", "DELETE"]
+    evidence_ids: list[str] = Field(min_length=1, max_length=100)
+    target_section_id: str | None = None
 
 
 class CapabilityCreate(BaseModel):

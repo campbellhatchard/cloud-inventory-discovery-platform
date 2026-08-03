@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.1
-**Status:** Report quality, readiness, executive summary, and operational governance; staging validation required
+**Version:** 0.8.2
+**Status:** Usability, report navigation, branding photo sizing, and evidence management; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -22,7 +22,11 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Browser-defaulted IANA timezone selection for sites
 - Context-correct full-colour and negative Cloud Inventory logos
 - Prospect-specific logo upload and header display
+- Dedicated Overview, Report, and Demo Preparation workspaces in the report navigation
 - Compiled Report review workspace with centralized validation and document generation
+- Configurable landscape and portrait report-photo dimensions in inches or centimetres
+- In-app evidence preview, multi-select move, and controlled evidence deletion
+- Context-preserving photograph upload and administration-tab navigation
 - AI-enhanced current-operations wording with selected photograph analysis, verification, refinement, and controlled acceptance
 - Direct section-level photograph upload with Quick Entry capture retained
 - Source-aware Cloud Inventory Approach generation using approved capabilities and approved historical knowledge

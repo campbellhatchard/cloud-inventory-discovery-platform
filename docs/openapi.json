@@ -414,6 +414,73 @@
             ],
             "title": "Heading Font"
           },
+          "landscape_photo_height": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.1,
+                "maximum": 30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landscape Photo Height"
+          },
+          "landscape_photo_width": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.1,
+                "maximum": 30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landscape Photo Width"
+          },
+          "photo_size_uom": {
+            "anyOf": [
+              {
+                "enum": [
+                  "INCHES",
+                  "CENTIMETRES"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Size Uom"
+          },
+          "portrait_photo_height": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.1,
+                "maximum": 30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portrait Photo Height"
+          },
+          "portrait_photo_width": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.1,
+                "maximum": 30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portrait Photo Width"
+          },
           "primary_color": {
             "anyOf": [
               {
@@ -912,6 +979,44 @@
           "name"
         ],
         "title": "EngagementCreate",
+        "type": "object"
+      },
+      "EvidenceBulkAction": {
+        "properties": {
+          "action": {
+            "enum": [
+              "MOVE",
+              "DELETE"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "target_section_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Section Id"
+          }
+        },
+        "required": [
+          "action",
+          "evidence_ids"
+        ],
+        "title": "EvidenceBulkAction",
         "type": "object"
       },
       "EvidenceReviewRequest": {
@@ -2076,7 +2181,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.1"
+    "version": "0.8.2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4395,6 +4500,53 @@
           }
         },
         "summary": "Upload Evidence"
+      }
+    },
+    "/api/reports/{report_id}/evidence/bulk": {
+      "post": {
+        "operationId": "bulk_manage_evidence_api_reports__report_id__evidence_bulk_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidenceBulkAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Manage Evidence"
       }
     },
     "/api/reports/{report_id}/evidence/{evidence_id}/review": {

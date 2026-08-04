@@ -226,6 +226,20 @@
         "title": "Body_add_report_member_api_reports__report_id__members_post",
         "type": "object"
       },
+      "Body_import_configuration_knowledge_api_admin_knowledge_import_configuration_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_configuration_knowledge_api_admin_knowledge_import_configuration_post",
+        "type": "object"
+      },
       "Body_import_knowledge_document_api_admin_knowledge_import_post": {
         "properties": {
           "capability_id": {
@@ -1166,6 +1180,13 @@
             ],
             "title": "Expires At"
           },
+          "knowledge_kind": {
+            "default": "GENERAL",
+            "maxLength": 50,
+            "minLength": 2,
+            "title": "Knowledge Kind",
+            "type": "string"
+          },
           "process_module": {
             "anyOf": [
               {
@@ -1222,6 +1243,23 @@
             "minLength": 2,
             "title": "Source Type",
             "type": "string"
+          },
+          "source_version": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Version"
+          },
+          "structured_data": {
+            "additionalProperties": true,
+            "title": "Structured Data",
+            "type": "object"
           },
           "title": {
             "maxLength": 250,
@@ -2205,7 +2243,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.4"
+    "version": "0.8.5"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2631,6 +2669,43 @@
           }
         },
         "summary": "Import Knowledge Document"
+      }
+    },
+    "/api/admin/knowledge/import-configuration": {
+      "post": {
+        "description": "Import Guided Setup JSON/ZIP as product configuration knowledge.\n\nThis endpoint never creates PromptDefinition records and therefore cannot\nchange the discovery question library. Imported records are PENDING until\nan administrator/product reviewer approves them.",
+        "operationId": "import_configuration_knowledge_api_admin_knowledge_import_configuration_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_configuration_knowledge_api_admin_knowledge_import_configuration_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Configuration Knowledge"
       }
     },
     "/api/admin/knowledge/{entry_id}/review": {

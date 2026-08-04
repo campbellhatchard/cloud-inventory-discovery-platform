@@ -2060,3 +2060,34 @@ The detailed interaction contract is maintained in `docs/QUICK_ENTRY_SPEC_v0.3.0
 The v0.4.0 build passed 23 automated tests, Python compilation, JavaScript syntax validation, OpenAPI generation, and the existing Quick Entry and document workflow regression suite. Physical-browser timezone defaults and visual logo acceptance remain staging gates.
 
 The detailed interaction contract is maintained in `docs/PROSPECT_ONBOARDING_SPEC_v0.4.0.md`.
+
+# 31. Controlled Enhancement Delta — Cloud Inventory Configuration Intelligence v0.8.5
+
+## 31.1 Change Control
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.8.5` |
+| Source baseline | `v0.8.4` |
+| Development branch | `feature/configuration-intelligence-v0.8.5` |
+| Database revision | `j50g3b9e7c10` |
+| Status | Implemented and automated validation passed; staging acceptance pending |
+
+## 31.2 Requirements
+
+- **FR-CIK-001:** Guided Setup configuration files shall be interpreted as controlled Cloud Inventory capability/configuration knowledge and shall not create Discovery `PromptDefinition` records.
+- **FR-CIK-002:** The capability catalog shall remain high-level and succinct; detailed configuration options shall be stored as knowledge beneath the relevant capability.
+- **FR-CIK-003:** Configuration knowledge shall retain source version, source question ID, source guidance, configuration values, provenance, relevant system references and claim-strength metadata for internal traceability.
+- **FR-CIK-004:** Configuration knowledge may be used to explain how an approved high-level capability can address customer-authored discovery evidence.
+- **FR-CIK-005:** Configuration knowledge shall not manufacture customer facts, requirements, pain points or configuration decisions.
+- **FR-CIK-006:** Customer-facing Cloud Inventory Approach wording shall not expose raw configuration questions, internal `nsC7` identifiers, PS implementation actions or exhaustive settings lists.
+- **FR-CIK-007:** Configuration topics identified by the source as non-standard shall be represented as scope/specialist-validation signals and shall not establish standard product support.
+- **FR-CIK-008:** The initial controlled seed shall normalize all 126 stable configuration definitions from Guided Setup v2.7 with the supplied v2.6 template retained as corroborating provenance.
+- **FR-CIK-009:** Administration shall permit controlled JSON/ZIP configuration imports. New imports shall enter pending review and shall create zero discovery prompts.
+- **FR-CIK-010:** Approval of a newer imported configuration record may supersede the prior approved version while preserving repository lineage.
+
+## 31.3 Verification
+
+The v0.8.5 feature build passed 99 automated tests across the complete regression suite, including seven dedicated configuration-intelligence tests, Python compilation, JavaScript syntax validation, OpenAPI generation, fresh migration and upgrade from the v0.8.4 database revision.
+
+The detailed interaction and governance contract is maintained in `docs/CONFIGURATION_INTELLIGENCE_SPEC_v0.8.5.md`.

@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.4
-**Status:** Durable AI wording reuse and refinement lineage added to the v0.8.3 fast-AI/photo-intelligence baseline; staging validation required
+**Version:** 0.8.5
+**Status:** Cloud Inventory Configuration Intelligence adds governed configuration knowledge beneath concise high-level capabilities; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -31,7 +31,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Independent cached photograph analysis followed by a separate photo-to-written-context revision workflow
 - Prioritized worker lanes isolate fast text, photo analysis, general AI, and publication processing
 - Direct section-level photograph upload with Quick Entry capture retained
-- Source-aware Cloud Inventory Approach generation using approved capabilities and approved historical knowledge
+- Source-aware Cloud Inventory Approach generation using approved capabilities, approved configuration intelligence, and approved historical knowledge
+- Governed Cloud Inventory configuration knowledge derived from controlled Guided Setup sources without adding discovery questions
 - General section notes and guided responses treated as Observations for Cloud Inventory functionality mapping without creating duplicate Findings
 - Optional discovery questions and sections; only populated sections require review before final publication
 - Stable left-navigation position while moving between report sections

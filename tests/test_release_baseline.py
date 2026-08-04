@@ -35,6 +35,6 @@ def test_release_version_is_consistent() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     service_worker = (ROOT / "app" / "static" / "sw.js").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.4"' in config
-    assert 'version = "0.8.4"' in pyproject
-    assert "ci-discovery-v0.8.4" in service_worker
+    assert 'app_version: str = "0.8.5"' in config
+    assert 'version = "0.8.5"' in pyproject
+    assert "ci-discovery-v0.8.5" in service_worker

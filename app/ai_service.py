@@ -137,6 +137,8 @@ def build_context(db: Session, report: Report, section: ReportSection | None, pu
                 "content": k.content,
                 "source_type": k.source_type,
                 "source_ref": k.source_ref,
+                "source_version": k.source_version,
+                "knowledge_kind": k.knowledge_kind,
                 "prospect_specific": k.prospect_id is not None,
             }
             for k in knowledge
@@ -906,10 +908,15 @@ def _knowledge_relevance_score(entry: KnowledgeEntry, module: str | None, query_
             score += 20
     elif not entry_module:
         score += 3
-    overlap = len(query_terms & _terms(f"{entry.title} {entry.content}"))
-    score += min(overlap, 20) * 2
+    structured_text = json.dumps(entry.structured_data or {}, ensure_ascii=False)
+    overlap = len(query_terms & _terms(f"{entry.title} {entry.content} {structured_text}"))
+    score += min(overlap, 24) * 2
     if entry.capability_id:
         score += 5
+    if entry.knowledge_kind == "PRODUCT_CONFIGURATION":
+        # Configuration records are intentionally detailed product knowledge.
+        # They receive a modest retrieval boost but never become discovery prompts.
+        score += 6
     return score
 
 
@@ -1013,11 +1020,17 @@ def build_solution_snapshot(db: Session, report: Report, section: ReportSection)
             # Knowledge tied to a non-approved capability may not be used to make
             # product claims in the solution narrative.
             continue
+        if entry.knowledge_kind == "PRODUCT_CONFIGURATION":
+            role = str((entry.structured_data or {}).get("knowledge_role") or "")
+            if role == "PLATFORM_SETUP":
+                # Tenant/setup mechanics are retained in the repository but are
+                # not part of operational discovery functionality mapping.
+                continue
         score = _knowledge_relevance_score(entry, section.process_module, query_terms)
         if score > 0:
             ranked_knowledge.append((score, entry))
     ranked_knowledge.sort(key=lambda pair: (-pair[0], pair[1].title.lower()))
-    selected_knowledge = [entry for _, entry in ranked_knowledge[:20]]
+    selected_knowledge = [entry for _, entry in ranked_knowledge[:24]]
 
     current_solution = db.scalar(
         select(SectionContentVersion)
@@ -1065,6 +1078,9 @@ def build_solution_snapshot(db: Session, report: Report, section: ReportSection)
                 "content": entry.content[:5000],
                 "source_type": entry.source_type,
                 "source_ref": entry.source_ref,
+                "source_version": entry.source_version,
+                "knowledge_kind": entry.knowledge_kind,
+                "structured_data": entry.structured_data or {},
                 "capability_id": entry.capability_id,
                 "prospect_specific": entry.prospect_id is not None,
                 "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
@@ -1124,7 +1140,9 @@ def _verify_solution_text(settings: Settings, snapshot: dict[str, Any], solution
         "You are a product-claim verifier for a Cloud Inventory customer-facing discovery report. "
         "Evaluate the proposed solution narrative only against the supplied APPROVED capability definitions, APPROVED knowledge, operational observations, and mappings. "
         "Do not use external knowledge. Block claims that invent functionality, configuration behavior, integration behavior, performance improvement, implementation commitment, guarantee, or customer fact. "
-        "A capability may be described only within its controlled description, prerequisites, and limitations. Historical knowledge may clarify wording but may not override a capability limitation. "
+        "A high-level capability may be explained using APPROVED PRODUCT_CONFIGURATION knowledge when that configuration record supports the behavior. "
+        "Do not allow customer-facing text to expose internal source questions, nsC7 object/field identifiers, PS action instructions, or unsupported standard-product claims from records marked SCOPE_SIGNAL_ONLY. "
+        "Historical knowledge may clarify wording but may not override a capability limitation or controlled configuration source. "
         "Return only JSON with keys verification_status and unsupported_claims. verification_status must be PASSED or BLOCKED."
     )
     payload = {
@@ -1163,7 +1181,10 @@ def run_solution_approach(
         "Use only the supplied operational observations/findings, approved capability catalog, approved knowledge, and metrics. "
         "General notes and guided responses marked GENERAL_OBSERVATION must be treated as observations when determining relevant functionality. "
         "Do not manufacture pain points from neutral observations. Do not invent product functionality, integrations, configuration, guarantees, performance improvements, or implementation commitments. "
-        "State prerequisites or limitations when material. Write in clear customer-facing prose explaining how relevant approved Cloud Inventory functionality can support the observed operation. "
+        "Treat approved capability descriptions as deliberately high-level and concise. Use approved PRODUCT_CONFIGURATION knowledge to explain only the configuration behavior that is directly relevant to the observed customer operation. "
+        "Do not turn configuration source material into discovery questions. Do not expose raw source-question wording, nsC7 object/field identifiers, PS implementation actions, or an exhaustive settings list in customer-facing prose. "
+        "Records marked SCOPE_SIGNAL_ONLY may identify a validation/specialist-review need but may not be presented as standard supported functionality. "
+        "State prerequisites or limitations when material. Write concise customer-facing prose explaining how relevant approved Cloud Inventory functionality can support the observed operation. "
         "Return only JSON with keys solution_text, capability_mappings, gaps, source_refs. "
         "capability_mappings must be an array of objects with capability_id, source_ref, rationale, prerequisites, limitations, knowledge_refs. "
         "Every capability_id must come from approved_capabilities. Every source_ref must come from operational_sources. Every knowledge_refs value must come from approved_knowledge."
@@ -1200,6 +1221,7 @@ def run_solution_approach(
     if verification["verification_status"] == "BLOCKED":
         repair_system = (
             "Repair the proposed Cloud Inventory approach using only the supplied approved source packet. Remove unsupported claims and invalid mappings. "
+            "Keep capability wording high-level and use configuration knowledge only where it directly explains the observed operation. Remove internal source questions, nsC7 identifiers, PS actions, and settings-list language. "
             "Do not add new capabilities or operational facts. Return only JSON with keys solution_text and capability_mappings using the same mapping schema."
         )
         repair_payload = {

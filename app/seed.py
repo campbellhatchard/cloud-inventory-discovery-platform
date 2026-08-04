@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 from sqlalchemy import select
@@ -159,6 +160,9 @@ def seed() -> None:
             db.add(KnowledgeEntry(
                 source_type="CONTROLLED_PRODUCT_REFERENCE",
                 source_ref=source_ref,
+                source_version=capability.product_version,
+                knowledge_kind="PRODUCT_CAPABILITY",
+                structured_data={"capability_code": capability.capability_code},
                 title=f"{capability.name} ({capability.capability_code})",
                 process_module=capability.domain,
                 content=content,
@@ -170,6 +174,39 @@ def seed() -> None:
                 approved_by=admin.id if capability.status == "APPROVED" else None,
                 created_by=admin.id,
             ))
+
+        # v0.8.5: the Guided Setup sources are controlled product/configuration
+        # knowledge. They enrich solution mapping only; they never create or
+        # modify discovery PromptDefinition records.
+        config_seed_path = ROOT / "assets" / "configuration-knowledge-seed.json"
+        if config_seed_path.exists():
+            config_seed = json.loads(config_seed_path.read_text(encoding="utf-8"))
+            capability_lookup = {
+                item.capability_code: item
+                for item in db.scalars(select(Capability).order_by(Capability.capability_code)).all()
+            }
+            for record in config_seed.get("records") or []:
+                source_ref = str(record.get("source_ref") or "").strip()
+                if not source_ref or db.scalar(select(KnowledgeEntry.id).where(KnowledgeEntry.source_ref == source_ref)):
+                    continue
+                capability = capability_lookup.get(str(record.get("capability_code") or ""))
+                db.add(KnowledgeEntry(
+                    source_type="CONTROLLED_CONFIGURATION_REFERENCE",
+                    source_ref=source_ref,
+                    source_version=str(record.get("source_version") or "") or None,
+                    knowledge_kind="PRODUCT_CONFIGURATION",
+                    structured_data=record.get("structured_data") or {},
+                    title=str(record.get("title") or source_ref)[:250],
+                    process_module=(str(record.get("process_module") or "").strip() or None),
+                    content=str(record.get("content") or "").strip(),
+                    capability_id=capability.id if capability else None,
+                    prospect_id=None,
+                    classification="INTERNAL",
+                    reusable_across_prospects=True,
+                    approval_state="APPROVED",
+                    approved_by=admin.id,
+                    created_by=admin.id,
+                ))
         db.commit()
         print("Seed complete.")
 

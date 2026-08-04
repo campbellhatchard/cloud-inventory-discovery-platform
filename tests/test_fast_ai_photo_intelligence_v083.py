@@ -89,7 +89,7 @@ def test_v083_version_migration_and_worker_lane_contract() -> None:
     worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
     jobs = (ROOT / "app" / "jobs.py").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.4"' in config
+    assert 'app_version: str = "0.8.5"' in config
     assert 'down_revision = "g27d0e6b4f77"' in migration
     assert 'batch.add_column(sa.Column("queue_name"' in migration
     assert 'batch.add_column(sa.Column("priority"' in migration

@@ -48,6 +48,7 @@ from .auth import (
     verify_password,
 )
 from .config import Settings, get_settings
+from .configuration_intelligence import CONFIGURATION_KNOWLEDGE_KIND, CONFIGURATION_SOURCE_TYPE, load_configuration_template, normalize_configuration_template
 from .database import get_db
 from .extraction import extract_text
 from .jobs import enqueue
@@ -2559,7 +2560,7 @@ def request_ai(
         if payload.evidence_ids:
             raise HTTPException(
                 400,
-                "Photographs are analyzed independently in AI Photo Analysis. AI Enhanced Wording is text-only in v0.8.4.",
+                "Photographs are analyzed independently in AI Photo Analysis. AI Enhanced Wording is text-only in v0.8.5.",
             )
         context_snapshot = build_observation_snapshot(db, report, section, [])
         source_fingerprint = str(
@@ -3203,7 +3204,7 @@ def list_knowledge(approval_state: str | None = None, process_module: str | None
     if prospect_id:
         stmt = stmt.where(KnowledgeEntry.prospect_id == prospect_id)
     items = list(db.scalars(stmt.limit(500)).all())
-    return [{"id": item.id, "source_type": item.source_type, "source_ref": item.source_ref, "title": item.title, "process_module": item.process_module, "content": item.content, "capability_id": item.capability_id, "prospect_id": item.prospect_id, "classification": item.classification, "reusable_across_prospects": item.reusable_across_prospects, "approval_state": item.approval_state, "approved_by": item.approved_by, "review_due_at": _iso(item.review_due_at), "expires_at": _iso(item.expires_at), "last_reviewed_at": _iso(item.last_reviewed_at), "created_at": _iso(item.created_at), "updated_at": _iso(item.updated_at)} for item in items]
+    return [{"id": item.id, "source_type": item.source_type, "source_ref": item.source_ref, "source_version": item.source_version, "knowledge_kind": item.knowledge_kind, "structured_data": item.structured_data or {}, "title": item.title, "process_module": item.process_module, "content": item.content, "capability_id": item.capability_id, "prospect_id": item.prospect_id, "classification": item.classification, "reusable_across_prospects": item.reusable_across_prospects, "approval_state": item.approval_state, "approved_by": item.approved_by, "review_due_at": _iso(item.review_due_at), "expires_at": _iso(item.expires_at), "last_reviewed_at": _iso(item.last_reviewed_at), "created_at": _iso(item.created_at), "updated_at": _iso(item.updated_at)} for item in items]
 
 
 @router.post("/admin/knowledge", dependencies=[Depends(require_csrf)])
@@ -3221,6 +3222,98 @@ def create_knowledge(payload: KnowledgeEntryCreate, actor: User = Depends(requir
     db.commit()
     return {"id": item.id, "approval_state": item.approval_state}
 
+
+
+@router.post("/admin/knowledge/import-configuration", dependencies=[Depends(require_csrf)])
+async def import_configuration_knowledge(
+    file: UploadFile = File(...),
+    actor: User = Depends(require_roles("ADMIN")),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Import Guided Setup JSON/ZIP as product configuration knowledge.
+
+    This endpoint never creates PromptDefinition records and therefore cannot
+    change the discovery question library. Imported records are PENDING until
+    an administrator/product reviewer approves them.
+    """
+    data = await file.read(settings.max_upload_bytes + 1)
+    if len(data) > settings.max_upload_bytes:
+        raise HTTPException(413, "Configuration knowledge file exceeds the configured upload limit.")
+    filename = Path(file.filename or "configuration-knowledge.json").name
+    try:
+        template = load_configuration_template(data, filename)
+        records = normalize_configuration_template(template, source_name=filename)
+    except (ValueError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+        raise HTTPException(400, f"Configuration knowledge import failed: {exc}") from exc
+
+    capability_lookup = {
+        item.capability_code: item
+        for item in db.scalars(select(Capability).order_by(Capability.capability_code)).all()
+    }
+    created_ids: list[str] = []
+    skipped = 0
+    newer_versions = 0
+    for record in records:
+        existing = db.scalar(select(KnowledgeEntry).where(KnowledgeEntry.source_ref == record.source_ref))
+        source_ref = record.source_ref
+        structured_data = dict(record.structured_data)
+        if existing:
+            if existing.source_version == record.source_version:
+                skipped += 1
+                continue
+            source_ref = f"{record.source_ref}:v{record.source_version}"
+            if db.scalar(select(KnowledgeEntry.id).where(KnowledgeEntry.source_ref == source_ref)):
+                skipped += 1
+                continue
+            structured_data["supersedes_entry_id"] = existing.id
+            newer_versions += 1
+        capability = capability_lookup.get(record.capability_code or "")
+        item = KnowledgeEntry(
+            source_type=CONFIGURATION_SOURCE_TYPE,
+            source_ref=source_ref,
+            source_version=record.source_version,
+            knowledge_kind=CONFIGURATION_KNOWLEDGE_KIND,
+            structured_data=structured_data,
+            title=record.title,
+            process_module=record.process_module,
+            content=record.content,
+            capability_id=capability.id if capability else None,
+            prospect_id=None,
+            classification="INTERNAL",
+            reusable_across_prospects=True,
+            approval_state="PENDING",
+            created_by=actor.id,
+        )
+        db.add(item)
+        db.flush()
+        created_ids.append(item.id)
+    audit(
+        db,
+        actor=actor,
+        action="CONFIGURATION_KNOWLEDGE_IMPORTED",
+        target_type="KNOWLEDGE_IMPORT",
+        target_id=hashlib.sha256(data).hexdigest()[:20],
+        metadata={
+            "file_name": filename,
+            "source_version": str((template.get("_meta") or {}).get("version") or "unknown"),
+            "records_found": len(records),
+            "created": len(created_ids),
+            "newer_versions": newer_versions,
+            "skipped": skipped,
+            "discovery_prompts_created": 0,
+        },
+    )
+    db.commit()
+    return {
+        "source_version": str((template.get("_meta") or {}).get("version") or "unknown"),
+        "records_found": len(records),
+        "created": len(created_ids),
+        "newer_versions": newer_versions,
+        "skipped": skipped,
+        "approval_state": "PENDING",
+        "discovery_prompts_created": 0,
+    }
 
 
 @router.post("/admin/knowledge/import", dependencies=[Depends(require_csrf)])
@@ -3332,6 +3425,14 @@ def review_knowledge(entry_id: str, payload: KnowledgeEntryReview, actor: User =
         item.review_due_at = payload.review_due_at
     if payload.expires_at is not None:
         item.expires_at = payload.expires_at
+    if payload.decision == "APPROVED" and item.knowledge_kind == CONFIGURATION_KNOWLEDGE_KIND:
+        supersedes_id = str((item.structured_data or {}).get("supersedes_entry_id") or "")
+        if supersedes_id:
+            prior = db.get(KnowledgeEntry, supersedes_id)
+            if prior and prior.knowledge_kind == CONFIGURATION_KNOWLEDGE_KIND and prior.approval_state == "APPROVED":
+                prior.approval_state = "SUPERSEDED"
+                prior.last_reviewed_at = utcnow()
+                prior.last_reviewed_by = actor.id
     item.approval_state = payload.decision
     item.approved_by = actor.id if payload.decision == "APPROVED" else None
     item.last_reviewed_at = utcnow()

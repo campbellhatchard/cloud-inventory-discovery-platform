@@ -222,4 +222,4 @@ def test_v082_migration_and_version_contract() -> None:
     assert "photo_size_uom" in migration
     assert "landscape_photo_width" in migration
     assert "portrait_photo_height" in migration
-    assert 'app_version: str = "0.8.4"' in config
+    assert 'app_version: str = "0.8.5"' in config

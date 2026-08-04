@@ -296,6 +296,9 @@ class CommentCreate(BaseModel):
 class KnowledgeEntryCreate(BaseModel):
     source_type: str = Field(min_length=2, max_length=50)
     source_ref: str | None = None
+    source_version: str | None = Field(default=None, max_length=100)
+    knowledge_kind: str = Field(default="GENERAL", min_length=2, max_length=50)
+    structured_data: dict[str, Any] = Field(default_factory=dict)
     title: str = Field(min_length=2, max_length=250)
     process_module: str | None = Field(default=None, max_length=100)
     content: str = Field(min_length=2)

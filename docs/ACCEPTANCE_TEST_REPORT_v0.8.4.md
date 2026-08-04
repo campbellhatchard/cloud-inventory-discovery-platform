@@ -26,3 +26,13 @@
 ## Packaging-runtime limitation
 
 Ruff and mypy are not installed in the packaging runtime. The Windows installer remains responsible for running the repository's complete pinned `Deploy.ps1 -Action Validate` gate before any commit or push.
+
+## Deployment package validation
+
+- The installer uses the established direct Downloads-folder PowerShell workflow.
+- `origin/staging` is locked to exact v0.8.3 commit `288cc4b1ad1d089e893ac5e1c0db332e896dd6a0`.
+- Release files are moved into the versioned installer archive after download.
+- The source ZIP does not contain the release installer or a CMD launcher.
+- The source ZIP contains no test database, runtime folder, bytecode, or validation cache.
+- Repository and installer-root defaults resolve from `%USERPROFILE%`.
+- Deployment secrets and local databases are excluded from source application.

@@ -22,7 +22,6 @@ const state = {
   saveTimers: new Map(),
   route: null,
   aiEnhancementPollToken: 0,
-  photoAnalysisPollToken: 0,
 };
 
 const esc = value => String(value ?? '')
@@ -256,15 +255,15 @@ function showModal(title, body, actions = '') {
   wrap.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h2>${esc(title)}</h2>${body}<div class="modal-actions">${actions || '<button class="btn btn-ghost" data-action="close-modal">Close</button>'}</div></section>`;
   document.body.appendChild(wrap);
 }
-function closeModal() { state.aiEnhancementPollToken += 1; state.photoAnalysisPollToken += 1; if ('speechSynthesis' in window) window.speechSynthesis.cancel(); document.getElementById('modal-root')?.remove(); }
+function closeModal() { state.aiEnhancementPollToken += 1; if ('speechSynthesis' in window) window.speechSynthesis.cancel(); document.getElementById('modal-root')?.remove(); }
 
 function showPasswordModal() {
   showModal('Change your password', `
     <p>The initial or temporary password must be replaced before the workspace can be used.</p>
     <form id="password-form">
       <div class="field"><label>Current password</label><input name="current_password" type="password" autocomplete="current-password" required></div>
-      <div class="field"><label>New password</label><input name="new_password" type="password" autocomplete="new-password" minlength="14" required><small>At least 14 characters and three character groups.</small></div>
-      <div class="field"><label>Confirm new password</label><input name="confirm_password" type="password" autocomplete="new-password" minlength="14" required></div>
+      <div class="field"><label>New password</label><input name="new_password" type="password" autocomplete="new-password" minlength="10" required><small>At least 10 characters and three character groups.</small></div>
+      <div class="field"><label>Confirm new password</label><input name="confirm_password" type="password" autocomplete="new-password" minlength="10" required></div>
       <button class="btn btn-primary btn-wide" type="submit">Update password</button>
     </form>`, '');
 }
@@ -273,7 +272,8 @@ function showUserMenu() {
   showModal('Account', `
     <p><strong>${esc(state.me.display_name || state.me.username)}</strong><br>${esc(state.me.email)}</p>
     <p>${state.me.roles.map(r => `<span class="badge">${esc(r)}</span>`).join(' ')}</p>
-    <button class="btn btn-ghost btn-wide" data-action="change-password">Change password</button>`,
+    <button class="btn btn-ghost btn-wide" data-action="change-password">Change password</button>
+    <button class="btn btn-ghost btn-wide" data-action="speech-settings">Speech settings</button>`,
     `<button class="btn btn-ghost" data-action="close-modal">Close</button><button class="btn btn-danger" data-action="logout">Sign out</button>`);
 }
 
@@ -512,10 +512,6 @@ function demoPriorityForSection(sectionId) {
   return state.report.demo_section_priorities?.find(item => item.section_id === sectionId) || null;
 }
 
-function sectionAiPhotos(section) {
-  return state.report.evidence.filter(item => item.section_id === section.id && item.file?.mime_type?.startsWith('image/'));
-}
-
 function aiSourceRefLabel(ref, section) {
   if (!ref) return '';
   if (typeof ref === 'object') return ref.label || ref.ref || '';
@@ -650,7 +646,7 @@ async function showAiEnhancement(section) {
   wrap.id = 'modal-root';
   wrap.className = 'modal-backdrop';
   wrap.innerHTML = `<section id="ai-enhancement-modal" class="modal ai-enhancement-modal" role="dialog" aria-modal="true" aria-label="AI enhance ${esc(section.title)}">
-    <div class="section-head"><div><div class="card-meta"><span class="badge badge-cyan">FAST AI WORDING</span><span>${esc(section.title)}</span></div><h2>Compare and refine current-operations wording</h2><p class="help">Saved, unaccepted wording is restored whenever the written discovery has not changed. Photograph analysis remains separate so visual processing cannot delay the wording draft.</p></div><button class="btn btn-ghost btn-small" data-action="close-modal">Close</button></div>
+    <div class="section-head"><div><div class="card-meta"><span class="badge badge-cyan">FAST AI WORDING</span><span>${esc(section.title)}</span></div><h2>Compare and refine current-operations wording</h2><p class="help">Saved, unaccepted wording is restored whenever the written discovery has not changed. AI wording uses written discovery only; photographs remain human-reviewed evidence.</p></div><button class="btn btn-ghost btn-small" data-action="close-modal">Close</button></div>
     <div class="ai-comparison-grid">
       <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>Original entered content</h3><span class="badge">Retained</span></div><textarea class="ai-comparison-text" readonly>${esc(sectionOriginalInputSummary(section))}</textarea></section>
       <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>AI-enhanced wording</h3><span class="help">Durable pending suggestion</span></div><div id="ai-enhanced-output"><div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Checking for saved AI wording…</p></div></div></section>
@@ -658,150 +654,6 @@ async function showAiEnhancement(section) {
   </section>`;
   document.body.appendChild(wrap);
   await loadCurrentAiEnhancement(section);
-}
-
-function photoAnalysisList(title, values) {
-  const items = values || [];
-  return items.length ? `<div class="photo-analysis-list"><strong>${esc(title)}</strong><ul>${items.map(item=>`<li>${esc(item)}</li>`).join('')}</ul></div>` : '';
-}
-
-function photoAnalysisCard(section, evidence) {
-  const photos = evidence.filter(item => item.evidence_type === 'PHOTO' && (item.preview_file || item.file)?.mime_type?.startsWith('image/'));
-  const analyzed = photos.filter(item => item.photo_analysis?.content);
-  const cards = photos.map(item => {
-    const preview = item.preview_file || item.file;
-    const analysis = item.photo_analysis?.content || null;
-    return `<article class="photo-analysis-card">
-      <label class="evidence-select-label"><input class="photo-analysis-select" type="checkbox" data-evidence-id="${item.id}" ${analysis ? 'data-analyzed="true"' : ''}> Select</label>
-      <div class="photo-analysis-thumb"><img src="/api/files/${preview.id}?inline=true" alt="${esc(item.caption || item.file?.file_name || 'Photograph')}" loading="lazy"></div>
-      <div class="photo-analysis-body">
-        <div class="section-head"><div><strong>${esc(item.caption || item.file?.file_name || 'Photograph')}</strong><div class="card-meta"><span>${analysis ? `Analyzed ${esc(fmtDateTime(item.photo_analysis.updated_at))}` : 'Not analyzed'}</span>${analysis?.detail_used ? `<span>Detail: ${esc(analysis.detail_used)}</span>` : ''}</div></div><span class="badge ${analysis ? 'badge-success' : ''}">${analysis ? 'ANALYZED' : 'NOT ANALYZED'}</span></div>
-        ${analysis ? `${photoAnalysisList('Visible observations', analysis.visible_observations)}${photoAnalysisList('Cautious operational interpretations', analysis.operational_interpretations)}${photoAnalysisList('Uncertainties', analysis.uncertainties)}${analysis.detail_escalation_reason ? `<p class="help"><strong>High-detail reason:</strong> ${esc(analysis.detail_escalation_reason)}</p>` : ''}` : '<p class="help">AI has not inspected this photograph. Written Current Operations and captions are not supplied during the independent visual-analysis stage.</p>'}
-      </div>
-    </article>`;
-  }).join('');
-  return `<section class="card" id="photo-analysis">
-    <div class="section-head"><div><h2>AI Photo Analysis</h2><p class="help">Analyze photographs independently from written discovery. The first pass determines what is visibly supportable. After analysis, compare selected photo observations with Current Operations to obtain context and propose a separate narrative revision.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" type="button" data-action="analyze-selected-photos" ${photos.length && state.aiStatus?.policy?.allowed ? '' : 'disabled'}>Analyze selected photos</button><button class="btn btn-secondary btn-small" type="button" data-action="compare-photo-context" ${analyzed.length && state.aiStatus?.policy?.allowed ? '' : 'disabled'}>Compare to Current Operations</button></div></div>
-    ${photos.length ? `<div class="photo-analysis-grid">${cards}</div>` : '<p class="help">Add photographs to this section before running independent photo analysis.</p>'}
-  </section>`;
-}
-
-function selectedPhotoAnalysisIds({analyzedOnly=false} = {}) {
-  return Array.from(document.querySelectorAll('.photo-analysis-select:checked'))
-    .filter(item => !analyzedOnly || item.dataset.analyzed === 'true')
-    .map(item => item.dataset.evidenceId)
-    .filter(Boolean);
-}
-
-function renderPhotoAnalysisProgress(rows) {
-  const target = document.getElementById('photo-analysis-progress');
-  if (!target) return;
-  target.innerHTML = `<div class="version-history">${rows.map(row=>`<article class="finding"><div class="section-head"><strong>${esc(row.label)}</strong><span class="badge ${['COMPLETED','CACHED'].includes(row.status)?'badge-success':row.status==='FAILED'?'badge-danger':'badge-cyan'}">${esc(row.status)}</span></div>${row.error?`<p class="validation-item ERROR">${esc(row.error)}</p>`:''}</article>`).join('')}</div>`;
-}
-
-async function pollPhotoAnalysisJobs(initialRows, section, token) {
-  let rows = initialRows.map(item => ({...item}));
-  while (token === state.photoAnalysisPollToken && document.getElementById('photo-analysis-modal')) {
-    const pending = rows.filter(item => item.ai_job_id && !['COMPLETED','FAILED','BLOCKED'].includes(item.status));
-    if (!pending.length) {
-      renderPhotoAnalysisProgress(rows);
-      toast('Selected photograph analysis is complete.','success');
-      closeModal();
-      state.reportFocusAnchor='photo-analysis';
-      await renderReport(state.report.report.id, section.id);
-      return;
-    }
-    const updates = await Promise.all(pending.map(async item => {
-      try { return await api(`/api/ai-jobs/${item.ai_job_id}`, {}, false); }
-      catch (error) { return {id:item.ai_job_id,status:'FAILED',error:error.message}; }
-    }));
-    for (const update of updates) {
-      const row = rows.find(item => item.ai_job_id === update.id);
-      if (!row) continue;
-      row.status = update.status;
-      row.error = update.error || null;
-    }
-    renderPhotoAnalysisProgress(rows);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-  }
-}
-
-async function analyzeSelectedPhotos(section) {
-  if (!navigator.onLine) throw new Error('Photo analysis requires an online connection.');
-  const selected = selectedPhotoAnalysisIds();
-  if (!selected.length) throw new Error('Select at least one photograph to analyze.');
-  const result = await api(`/api/reports/${state.report.report.id}/sections/${section.id}/photo-analysis`, {method:'POST',body:{evidence_ids:selected}}, false);
-  const labels = new Map(sectionAiPhotos(section).map(item=>[item.id,item.caption || item.file?.file_name || 'Photograph']));
-  const rows = (result.jobs || []).map(item=>({...item,label:labels.get(item.evidence_id)||'Photograph'}));
-  closeModal();
-  showModal('Independent Photo Analysis', '<div id="photo-analysis-progress"></div><p class="help">Photos are processed separately from written discovery. You may close this window; queued jobs continue in the background.</p>');
-  const modal = document.querySelector('#modal-root .modal');
-  if (modal) modal.id='photo-analysis-modal';
-  renderPhotoAnalysisProgress(rows);
-  const token = ++state.photoAnalysisPollToken;
-  await pollPhotoAnalysisJobs(rows, section, token);
-}
-
-function renderPhotoContextRevisionResult(job, section) {
-  const target = document.getElementById('photo-context-output');
-  if (!target) return;
-  const result = job?.suggestion?.content || {};
-  const text = result.suggested_text || result.enhanced_text || '';
-  const passed = job.status === 'COMPLETED' && result.verification_status === 'PASSED' && result.accept_allowed !== false;
-  target.innerHTML = `
-    <div class="ai-result-head"><span class="badge ${passed?'badge-success':'badge-danger'}">${esc(result.verification_status || job.status || 'REVIEW REQUIRED')}</span><button class="btn btn-ghost btn-small" type="button" data-action="speak-ai-text" ${text?'':'disabled'}>🔊 Read aloud</button></div>
-    <div class="photo-context-assessment">
-      ${photoAnalysisList('Supports written description', result.supports)}
-      ${photoAnalysisList('Adds useful context', result.adds_context)}
-      ${photoAnalysisList('Potential conflicts', result.potential_conflicts)}
-      ${photoAnalysisList('Open questions', result.open_questions)}
-    </div>
-    <div class="field"><label>Suggested revised Current Operations</label><textarea id="photo-context-text" class="ai-comparison-text" readonly>${esc(text)}</textarea></div>
-    ${(result.unsupported_claims||[]).length ? `<div class="validation-item ERROR"><strong>Unsupported claims remain.</strong><ul>${result.unsupported_claims.map(item=>`<li>${esc(item.text||JSON.stringify(item))}</li>`).join('')}</ul></div>` : ''}
-    <div class="field"><label for="photo-context-instruction">Refine this comparison</label><textarea id="photo-context-instruction" placeholder="For example: Keep the current wording but add only the visibly supported staging detail."></textarea></div>
-    <div class="card-actions"><button class="btn btn-secondary" type="button" data-action="refine-photo-context" data-suggestion-id="${esc(job.suggestion.id)}">Refine</button><button class="btn btn-ghost" type="button" data-action="dismiss-photo-context" data-suggestion-id="${esc(job.suggestion.id)}">Dismiss</button><button class="btn btn-primary" type="button" data-action="accept-photo-context" data-suggestion-id="${esc(job.suggestion.id)}" ${passed?'':'disabled'}>Apply revision</button></div>`;
-  target.dataset.enhancedText = text;
-}
-
-async function pollPhotoContextRevision(jobId, section, token) {
-  const output = document.getElementById('photo-context-output');
-  while (token === state.aiEnhancementPollToken && document.getElementById('photo-context-modal')) {
-    const job = await api(`/api/ai-jobs/${jobId}`, {}, false);
-    if (job.status === 'COMPLETED' && job.suggestion) { renderPhotoContextRevisionResult(job, section); return; }
-    if (['FAILED','BLOCKED'].includes(job.status)) {
-      if (output) output.innerHTML=`<div class="validation-item ERROR"><strong>Photo-context comparison failed.</strong><p>${esc(job.error||job.policy_decision?.reason||'The AI job could not be completed.')}</p></div>`;
-      return;
-    }
-    if (output) output.innerHTML='<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Comparing independent photo observations with written Current Operations…</p><p class="help">The original image files are not sent again during this stage.</p></div>';
-    await new Promise(resolve=>setTimeout(resolve,1500));
-  }
-}
-
-async function requestPhotoContextRevision(section, parentSuggestionId=null) {
-  const modal=document.getElementById('photo-context-modal');
-  let selected=selectedPhotoAnalysisIds({analyzedOnly:true});
-  if (!selected.length && modal?.dataset.evidenceIds) selected=modal.dataset.evidenceIds.split(',').filter(Boolean);
-  if (!selected.length) selected=sectionAiPhotos(section).filter(item=>item.photo_analysis?.content).map(item=>item.id);
-  if (!selected.length) throw new Error('Analyze at least one photograph before comparing it to Current Operations.');
-  const instruction=document.getElementById('photo-context-instruction')?.value?.trim()||null;
-  if (modal) modal.dataset.evidenceIds=selected.join(',');
-  const result=await api(`/api/reports/${state.report.report.id}/ai`,{method:'POST',body:{section_id:section.id,purpose:'PHOTO_CONTEXT_REVISION',instructions:instruction,evidence_ids:selected,parent_suggestion_id:parentSuggestionId}},false);
-  const token=++state.aiEnhancementPollToken;
-  await pollPhotoContextRevision(result.ai_job_id,section,token);
-}
-
-async function showPhotoContextRevision(section) {
-  if (!navigator.onLine) throw new Error('Photo-context comparison requires an online connection.');
-  if (!state.aiStatus?.policy?.allowed) throw new Error(state.aiStatus?.policy?.reason || 'AI is not configured for this environment.');
-  let selected=selectedPhotoAnalysisIds({analyzedOnly:true});
-  if (!selected.length) selected=sectionAiPhotos(section).filter(item=>item.photo_analysis?.content).map(item=>item.id);
-  if (!selected.length) throw new Error('Analyze at least one photograph before comparing it to Current Operations.');
-  closeModal();
-  const wrap=document.createElement('div');
-  wrap.id='modal-root';wrap.className='modal-backdrop';
-  wrap.innerHTML=`<section id="photo-context-modal" class="modal ai-enhancement-modal" role="dialog" aria-modal="true" aria-label="Compare photo observations to Current Operations" data-evidence-ids="${esc(selected.join(','))}"><div class="section-head"><div><div class="card-meta"><span class="badge badge-cyan">PHOTO + WRITTEN CONTEXT</span><span>${esc(section.title)}</span></div><h2>Compare independent photo observations with Current Operations</h2><p class="help">This stage uses the stored visual observations plus the written discovery. The original images are not analyzed again.</p></div><button class="btn btn-ghost btn-small" data-action="close-modal">Close</button></div><div class="ai-comparison-grid"><section class="ai-comparison-panel"><div class="ai-panel-title"><h3>Current written description</h3><span class="badge">Source</span></div><textarea class="ai-comparison-text" readonly>${esc(sectionOriginalInputSummary(section))}</textarea></section><section class="ai-comparison-panel"><div class="ai-panel-title"><h3>Suggested revision</h3><span class="help">Human approval required</span></div><div id="photo-context-output"><div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Preparing comparison…</p></div></div></section></div></section>`;
-  document.body.appendChild(wrap);
-  await requestPhotoContextRevision(section);
 }
 
 async function showSectionContentHistory(section) {
@@ -1135,14 +987,75 @@ async function showTraceability(){
   showModal('Report Source and Claim Traceability',`${data.executive_summary?`<article class="finding"><h3>Executive Summary</h3><span class="badge">${esc(data.executive_summary.classification.replaceAll('_',' '))}</span><p>${esc(data.executive_summary.text)}</p></article>`:''}<div class="traceability-list">${cards}</div>`,'');
 }
 
-function speakAiText() {
-  const text = document.getElementById('ai-enhanced-output')?.dataset.enhancedText || document.getElementById('ai-solution-output')?.dataset.enhancedText || document.getElementById('ai-benefits-output')?.dataset.enhancedText || document.getElementById('ai-demo-plan-output')?.dataset.enhancedText || document.getElementById('ai-executive-summary-output')?.dataset.enhancedText || document.getElementById('ai-enhanced-text')?.value || document.getElementById('ai-solution-text')?.value || '';
+const SPEECH_VOICE_KEY = 'ci-discovery-speech-voice-uri';
+const SPEECH_RATE_KEY = 'ci-discovery-speech-rate';
+
+function speechPreferences() {
+  let voiceUri = '';
+  let rate = 1;
+  try {
+    voiceUri = localStorage.getItem(SPEECH_VOICE_KEY) || '';
+    const storedRate = Number(localStorage.getItem(SPEECH_RATE_KEY) || '1');
+    if ([0.85, 1, 1.15].includes(storedRate)) rate = storedRate;
+  } catch { /* local preferences are optional */ }
+  return {voiceUri, rate};
+}
+
+function availableSpeechVoices() {
+  if (!('speechSynthesis' in window)) return [];
+  return window.speechSynthesis.getVoices().slice().sort((a,b)=>`${a.lang} ${a.name}`.localeCompare(`${b.lang} ${b.name}`));
+}
+
+function speakText(text, override = null) {
   if (!text) return;
   if (!('speechSynthesis' in window)) { toast('Text-to-speech is not supported by this browser.','error'); return; }
+  const prefs = override || speechPreferences();
+  const voices = availableSpeechVoices();
+  const selectedVoice = prefs.voiceUri ? voices.find(item => item.voiceURI === prefs.voiceUri) : null;
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1;
+  utterance.rate = prefs.rate || 1;
+  if (selectedVoice) {
+    utterance.voice = selectedVoice;
+    utterance.lang = selectedVoice.lang;
+  }
   window.speechSynthesis.speak(utterance);
+}
+
+function speechRateOptions(selected) {
+  return [[0.85,'Slow'],[1,'Normal'],[1.15,'Faster']].map(([value,label])=>`<option value="${value}" ${Number(selected)===value?'selected':''}>${label}</option>`).join('');
+}
+
+function renderSpeechVoiceOptions() {
+  const select = document.getElementById('speech-voice-select');
+  if (!select) return;
+  const preferred = select.dataset.preferred || speechPreferences().voiceUri;
+  const voices = availableSpeechVoices();
+  const exists = voices.some(item=>item.voiceURI===preferred);
+  select.innerHTML = `<option value="">System / Browser Default</option>${voices.map(item=>`<option value="${esc(item.voiceURI)}" ${item.voiceURI===preferred?'selected':''}>${esc(item.name)} — ${esc(item.lang)}${item.default?' (default)':''}</option>`).join('')}`;
+  if (!exists) select.value = '';
+}
+
+function showSpeechSettings() {
+  const prefs = speechPreferences();
+  const supported = 'speechSynthesis' in window;
+  showModal('Speech settings', supported ? `<form id="speech-settings-form"><p class="help">System / Browser Default leaves voice selection to the operating system and browser. You can alternatively select a voice exposed by this device. Preferences are stored only on this device/browser.</p><div class="field"><label>Voice</label><select id="speech-voice-select" name="voice_uri" data-preferred="${esc(prefs.voiceUri)}"><option value="">Loading available voices…</option></select></div><div class="field"><label>Speaking speed</label><select name="rate">${speechRateOptions(prefs.rate)}</select></div><div class="card-actions"><button class="btn btn-ghost" type="button" data-action="test-speech-voice">Test voice</button><button class="btn btn-primary" type="submit">Save speech settings</button></div></form>` : '<div class="validation-item ERROR">Text-to-speech is not supported by this browser.</div>', '');
+  if (supported) renderSpeechVoiceOptions();
+}
+
+function testSpeechVoice() {
+  const select = document.getElementById('speech-voice-select');
+  const rate = Number(document.querySelector('#speech-settings-form [name="rate"]')?.value || '1');
+  speakText('Cloud Inventory Site Discovery speech settings are ready.', {voiceUri: select?.value || '', rate});
+}
+
+function speakAiText() {
+  const text = document.getElementById('ai-enhanced-output')?.dataset.enhancedText || document.getElementById('ai-solution-output')?.dataset.enhancedText || document.getElementById('ai-benefits-output')?.dataset.enhancedText || document.getElementById('ai-demo-plan-output')?.dataset.enhancedText || document.getElementById('ai-executive-summary-output')?.dataset.enhancedText || document.getElementById('ai-enhanced-text')?.value || document.getElementById('ai-solution-text')?.value || '';
+  speakText(text);
+}
+
+if ('speechSynthesis' in window) {
+  window.speechSynthesis.addEventListener('voiceschanged', renderSpeechVoiceOptions);
 }
 
 function reportSectionContent(section) {
@@ -1175,8 +1088,7 @@ function reportSectionContent(section) {
     ${section.process_module ? `<section class="card" id="cloud-inventory-approach"><div class="section-head"><div><h2>Cloud Inventory Approach</h2><p class="help">Type the Cloud Inventory approach directly, map approved capabilities to operational observations, generate a source-grounded response with AI, or use any combination of these methods. AI generation uses approved product references and approved historical knowledge only.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="generate-solution-approach" ${solutionEnabled?'':'disabled'} title="${esc(solutionEnabled ? 'Generate or improve a source-grounded Cloud Inventory approach' : (state.aiStatus?.policy?.reason || (!approvedCapabilityCount ? 'No approved Cloud Inventory capabilities are available.' : 'Enter operational observations before generating an approach.')))}">${approach?.text ? 'Enhance with AI' : 'Generate with AI'}</button><button class="btn btn-ghost btn-small" data-action="solution-version-history">Version history</button><button class="btn btn-ghost btn-small" data-action="map-capability" ${sectionObservationSources(section).length?'':'disabled'}>Map approved capability</button></div></div><div class="field"><label for="cloud-inventory-approach-editor">Cloud Inventory approach narrative</label><textarea id="cloud-inventory-approach-editor" class="editor solution-approach-editor" data-section-id="${section.id}" data-content-version="${approach?.version || ''}" placeholder="Describe how Cloud Inventory will support this operational area. You can type directly, map approved capabilities, or use Generate with AI. Autosaves after you stop typing.">${esc(approach?.text || '')}</textarea><div id="solution-approach-save" class="save-state">${approach ? `${esc(approach.source_type.replaceAll('_',' '))} · Version ${esc(approach.version)} · ${esc(fmtDateTime(approach.created_at))}` : ''}</div></div>${approvedMappings.length?`<div class="solution-mapping-summary"><strong>Approved functionality mappings</strong>${approvedMappings.map(item=>`<div class="finding"><div class="card-meta"><span class="badge badge-success">${esc(item.capability_code)}</span><span>${esc(item.source_label || 'Operational observation')}</span></div><strong>${esc(item.capability_name)}</strong><p>${esc(item.rationale)}</p></div>`).join('')}</div>`:''}</section>` : ''}
     ${section.process_module ? `<section class="card" id="targeted-benefits"><div class="section-head"><div><h2>Targeted Benefits</h2><p class="help">Capture or generate concise benefits that connect the observed operation to the accepted Cloud Inventory approach. Numeric claims require a recorded metric, formula, and explicit assumptions.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="generate-targeted-benefits" ${benefitsEnabled?'':'disabled'}>${sectionBenefits.length?'Enhance with AI':'Generate with AI'}</button><button class="btn btn-ghost btn-small" data-action="new-benefit">Add benefit</button></div></div>${sectionBenefits.length?`<div class="benefit-list">${sectionBenefits.map(item=>`<article class="finding"><div class="section-head"><div><strong>${esc(benefitCategoryLabel(item.category))}</strong><div class="card-meta"><span>${esc(item.measure_type)}</span><span>Confidence: ${esc(item.confidence)}</span></div></div><span class="badge ${item.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(item.approval_state)}</span></div><p>${esc(item.statement)}</p>${item.source_label?`<p class="help"><strong>Based on:</strong> ${esc(item.source_label)}</p>`:''}${canReview(report.access_scope)&&item.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-benefit" data-id="${item.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-benefit" data-id="${item.id}" data-decision="REJECTED">Reject</button></div>`:''}</article>`).join('')}</div>`:'<p class="help">No targeted benefits have been captured for this operational area.</p>'}</section>
     <section class="card" id="demo-priority"><div class="section-head"><div><h2>Demo Priority</h2><p class="help">These inputs are internal to the presales team and are used to build the customer-specific demo flow.</p></div></div><form id="section-demo-priority-form"><input type="hidden" name="section_id" value="${section.id}"><input type="hidden" name="expected_version" value="${demoPriority?.version||''}"><div class="field-row"><div class="field"><label>Importance</label><select name="priority"><option value="MUST_SHOW" ${demoPriority?.priority==='MUST_SHOW'?'selected':''}>Must show</option><option value="SHOULD_SHOW" ${demoPriority?.priority==='SHOULD_SHOW'?'selected':''}>Should show</option><option value="OPTIONAL" ${!demoPriority||demoPriority.priority==='OPTIONAL'?'selected':''}>Optional</option><option value="DO_NOT_SHOW" ${demoPriority?.priority==='DO_NOT_SHOW'?'selected':''}>Do not show</option></select></div><div class="field"><label>Estimated minutes</label><input name="estimated_minutes" type="number" min="1" max="240" value="${esc(demoPriority?.estimated_minutes||'')}"></div></div><div class="field"><label>What the presales consultant should show</label><textarea name="user_notes" placeholder="For example: Demonstrate how urgent picking work can be prioritized without relying on verbal instructions.">${esc(demoPriority?.user_notes||'')}</textarea></div><div class="field"><label>Constraints or claims to avoid</label><textarea name="constraints" placeholder="For example: Do not demonstrate ERP order creation; the ERP remains the system of record.">${esc(demoPriority?.constraints||'')}</textarea></div><button class="btn btn-ghost btn-small" type="submit">Save demo priority</button></form></section>` : ''}
-    ${photoAnalysisCard(section,evidence)}
-    <section class="card" id="photos"><div class="section-head"><div><h2>Site photographs and attachments</h2><p class="help">Upload, preview, move, or remove evidence associated with this operational section. Evidence routed from Quick Entry also appears here for AI enhancement and publication.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="section-upload-photo">Add photographs</button><button class="btn btn-ghost btn-small" data-action="move-selected-evidence" disabled>Move selected</button><button class="btn btn-danger btn-small" data-action="delete-selected-evidence" disabled>Delete selected</button><button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button></div></div><div class="evidence-grid">${evidence.map(e => { const preview=e.preview_file||e.file; return `<article class="evidence-card"><label class="evidence-select-label"><input class="evidence-select" type="checkbox" data-evidence-id="${e.id}"> Select</label><div class="evidence-thumb">${preview?.mime_type?.startsWith('image/')?`<img src="/api/files/${preview.id}?inline=true" alt="${esc(e.caption || e.file?.file_name || 'Photograph')}" loading="lazy">`:`<span>${esc(e.evidence_type==='PHOTO'?'Photo preview unavailable':'Attachment')}</span>`}</div><div class="evidence-body"><strong>${esc(e.caption || e.file?.file_name || 'Evidence')}</strong><div class="card-meta"><span>${esc(e.placement)}</span><span>${e.file?bytes(e.file.size_bytes):''}</span><span class="badge">${esc(e.extraction_state || 'NOT APPLICABLE')}</span></div>${e.file?`<button class="btn btn-ghost btn-small" type="button" data-action="open-evidence-preview" data-id="${e.id}">Open file</button>`:''}${canReview(report.access_scope)?`<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="true">Include</button><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="false">Supporting only</button></div>`:''}</div></article>`; }).join('') || '<p class="help">No site photographs have been added to this section yet.</p>'}</div></section>`;
+    <section class="card" id="photos"><div class="section-head"><div><h2>Site photographs and attachments</h2><p class="help">Upload, preview, move, or remove evidence associated with this operational section. Evidence routed from Quick Entry also appears here for human review and publication.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="section-upload-photo">Add photographs</button><button class="btn btn-ghost btn-small" data-action="move-selected-evidence" disabled>Move selected</button><button class="btn btn-danger btn-small" data-action="delete-selected-evidence" disabled>Delete selected</button><button class="btn btn-ghost btn-small" data-action="go-quick-entry">Open Quick Entry</button></div></div><div class="evidence-grid">${evidence.map(e => { const preview=e.preview_file||e.file; return `<article class="evidence-card"><label class="evidence-select-label"><input class="evidence-select" type="checkbox" data-evidence-id="${e.id}"> Select</label><div class="evidence-thumb">${preview?.mime_type?.startsWith('image/')?`<img src="/api/files/${preview.id}?inline=true" alt="${esc(e.caption || e.file?.file_name || 'Photograph')}" loading="lazy">`:`<span>${esc(e.evidence_type==='PHOTO'?'Photo preview unavailable':'Attachment')}</span>`}</div><div class="evidence-body"><strong>${esc(e.caption || e.file?.file_name || 'Evidence')}</strong><div class="card-meta"><span>${esc(e.placement)}</span><span>${e.file?bytes(e.file.size_bytes):''}</span><span class="badge">${esc(e.extraction_state || 'NOT APPLICABLE')}</span></div>${e.file?`<button class="btn btn-ghost btn-small" type="button" data-action="open-evidence-preview" data-id="${e.id}">Open file</button>`:''}${canReview(report.access_scope)?`<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="true">Include</button><button class="btn btn-ghost btn-small" data-action="review-evidence" data-id="${e.id}" data-include="false">Supporting only</button></div>`:''}</div></article>`; }).join('') || '<p class="help">No site photographs have been added to this section yet.</p>'}</div></section>`;
 }
 
 function reportInspector(section) {
@@ -1192,7 +1104,7 @@ function reportInspector(section) {
     <aside class="report-inspector">
       <section class="inspector-card"><h3>Cloud Inventory functionality</h3>${observationSources.length?`<button class="btn btn-ghost btn-small btn-wide" data-action="map-capability">Map approved capability</button><p class="help">Formal findings and general notes are both available as mapping sources. Unclassified general notes are treated as Observations.</p>`:'<p class="help">Capture a current-operations note, guided response, or finding before mapping functionality.</p>'}${mappings.map(m=>`<div class="finding"><div class="card-meta"><span>${esc(m.source_label || 'Operational source')}</span><span class="badge ${m.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(m.approval_state)}</span></div><strong>${esc(m.capability_name)}</strong><p>${esc(m.rationale)}</p>${m.source_statement?`<p class="help"><strong>Mapped from:</strong> ${esc(m.source_statement)}</p>`:''}${canR&&m.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
       <section class="inspector-card"><h3>Benefits and baselines</h3><button class="btn btn-ghost btn-small btn-wide" data-action="new-benefit">Add benefit statement</button>${benefits.map(b=>`<div class="finding"><p>${esc(b.statement)}</p><div class="card-meta"><span>${esc(b.measure_type)}</span><span class="badge ${b.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(b.approval_state)}</span></div>${canR&&b.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
-      <section class="inspector-card"><h3>AI assistance</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p>${suggestions.filter(s=>['OBSERVATION_ENHANCEMENT','PHOTO_CONTEXT_REVISION','SOLUTION_APPROACH','TARGETED_BENEFITS'].includes(s.purpose)).slice(0,5).map(s=>`<div class="finding"><div class="card-meta"><span>${s.purpose==='SOLUTION_APPROACH'?'Cloud Inventory approach':s.purpose==='TARGETED_BENEFITS'?'Targeted benefits':s.purpose==='PHOTO_CONTEXT_REVISION'?'Photo-context revision':'Observation enhancement'}</span><span>${esc(fmtDateTime(s.created_at))}</span><span class="badge ${s.review_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(s.review_state)}</span></div><p>${esc(((s.content.solution_text || s.content.enhanced_text || (s.content.benefits||[]).map(item=>item.statement).join('; ') || '')).slice(0,220))}${(s.content.solution_text || s.content.enhanced_text || (s.content.benefits||[]).map(item=>item.statement).join('; ') || '').length>220?'…':''}</p></div>`).join('')}</section>
+      <section class="inspector-card"><h3>AI assistance</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p>${suggestions.filter(s=>['OBSERVATION_ENHANCEMENT','SOLUTION_APPROACH','TARGETED_BENEFITS'].includes(s.purpose)).slice(0,5).map(s=>`<div class="finding"><div class="card-meta"><span>${s.purpose==='SOLUTION_APPROACH'?'Cloud Inventory approach':s.purpose==='TARGETED_BENEFITS'?'Targeted benefits':'Observation enhancement'}</span><span>${esc(fmtDateTime(s.created_at))}</span><span class="badge ${s.review_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(s.review_state)}</span></div><p>${esc(((s.content.solution_text || s.content.enhanced_text || (s.content.benefits||[]).map(item=>item.statement).join('; ') || '')).slice(0,220))}${(s.content.solution_text || s.content.enhanced_text || (s.content.benefits||[]).map(item=>item.statement).join('; ') || '').length>220?'…':''}</p></div>`).join('')}</section>
       <section class="inspector-card"><h3>Collaboration comments</h3><form id="comment-form"><input type="hidden" name="section_id" value="${section.id}"><div class="field"><label class="sr-only">Comment</label><textarea name="body" required placeholder="Add a review note, question, or follow-up request."></textarea></div><button class="btn btn-ghost btn-small btn-wide" type="submit">Add comment</button></form>${comments.map(c=>`<div class="finding"><div class="card-meta"><strong>${esc(c.author_name)}</strong><span>${fmtDate(c.created_at)}</span></div><p>${esc(c.body)}</p><span class="badge ${c.status==='RESOLVED'?'badge-success':'badge-warning'}">${esc(c.status)}</span>${canR&&c.status==='OPEN'?`<button class="btn btn-ghost btn-small" data-action="resolve-comment" data-id="${c.id}">Resolve</button>`:''}</div>`).join('') || '<p class="help">No comments for this section.</p>'}</section>
     </aside>`;
 }
@@ -1498,7 +1410,7 @@ function renderAdminTab(tab) {
   state.activeAdminTab = tab;
   const data=window.__adminData; const panel=document.getElementById('admin-panel');
   document.querySelectorAll('[data-action="admin-tab"]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));
-  if(tab==='users') panel.innerHTML=`<div class="page-header"><div><h2>Users</h2><p>Application-managed identities and global roles.</p></div><button class="btn btn-primary" data-action="new-user">Create user</button></div><div class="table-wrap"><table><thead><tr><th>User</th><th>Email</th><th>Roles</th><th>Status</th></tr></thead><tbody>${data.users.map(u=>`<tr><td>${esc(u.display_name||u.username)}<br><span class="help">${esc(u.username)}</span></td><td>${esc(u.email)}</td><td>${u.roles.map(r=>`<span class="badge">${esc(r)}</span>`).join(' ')}</td><td>${esc(u.status)}</td></tr>`).join('')}</tbody></table></div>`;
+  if(tab==='users') panel.innerHTML=`<div class="page-header"><div><h2>Users</h2><p>Application-managed identities and global roles. New and reset users receive the configured temporary password and must change it at next login.</p></div><button class="btn btn-primary" data-action="new-user">Create user</button></div><div class="table-wrap"><table><thead><tr><th>User</th><th>Email</th><th>Roles</th><th>Status</th><th>Actions</th></tr></thead><tbody>${data.users.map(u=>`<tr><td>${esc(u.display_name||u.username)}<br><span class="help">${esc(u.username)}</span></td><td>${esc(u.email)}</td><td>${u.roles.map(r=>`<span class="badge">${esc(r)}</span>`).join(' ')}</td><td>${esc(u.status)}</td><td><div class="toolbar"><button class="btn btn-ghost btn-small" data-action="reset-user-password" data-user-id="${u.id}" data-user-name="${esc(u.display_name||u.username)}" ${u.id===state.me?.id?'disabled':''}>Reset password</button><button class="btn btn-danger btn-small" data-action="delete-user" data-user-id="${u.id}" data-user-name="${esc(u.display_name||u.username)}" ${u.id===state.me?.id?'disabled':''}>Delete</button></div></td></tr>`).join('')}</tbody></table></div>`;
   if(tab==='review-queue') panel.innerHTML=`<div class="page-header"><div><h2>Central Reviewer Work Queue</h2><p>Pending capability mappings, benefits, AI suggestions, comments, failed publications, report-quality recommendations, and knowledge approvals.</p></div><span class="badge badge-warning">${esc(data.reviewQueue.count)} items</span></div><div class="review-queue-panel">${data.reviewQueue.items.length?data.reviewQueue.items.map(item=>`<article class="review-queue-item"><div><div class="card-meta"><span class="badge ${item.status==='STALE'?'badge-danger':'badge-warning'}">${esc(item.status)}</span><span>${esc(item.type.replaceAll('_',' '))}</span>${item.report_title?`<span>${esc(item.report_title)}</span>`:''}</div><strong>${esc(item.label||'Review item')}</strong></div>${item.report_id?`<button class="btn btn-ghost btn-small" data-action="open-queue-report" data-report-id="${item.report_id}" data-section-id="${item.section_id||'report-preview'}">Open</button>`:item.type==='KNOWLEDGE'?`<button class="btn btn-ghost btn-small" data-action="review-knowledge-detail" data-id="${item.id}">Review</button>`:''}</article>`).join(''):'<p class="help">No reviewer work is currently queued.</p>'}</div>`;
   if(tab==='operations') {const o=data.operations;const w=o.worker;panel.innerHTML=`<div class="page-header"><div><h2>AI, Worker, Storage, and Publication Health</h2><p>Operational signals exclude credentials and other secret values.</p></div><span class="badge badge-cyan">v${esc(o.app_version)}</span></div><section class="stats"><div class="stat"><strong>${o.ai.enabled?'ON':'OFF'}</strong><span>Web AI ${esc(o.ai.model||'')}</span></div><div class="stat"><strong>${esc(o.ai.job_counts?.QUEUED||0)}</strong><span>AI queued</span></div><div class="stat"><strong>${esc(o.ai.job_counts?.FAILED||0)}</strong><span>AI failed</span></div><div class="stat"><strong>${o.ai.average_processing_seconds==null?'—':esc(o.ai.average_processing_seconds)}</strong><span>Avg AI seconds</span></div><div class="stat"><strong>${esc(o.lifecycle.capabilities_due)}</strong><span>Capabilities due</span></div><div class="stat"><strong>${esc(o.lifecycle.knowledge_due)}</strong><span>Knowledge due</span></div><div class="stat"><strong>${esc(o.lifecycle.knowledge_expired)}</strong><span>Knowledge expired</span></div></section><div class="grid grid-2"><section class="card"><h3>Worker heartbeat</h3>${w?`<p>${readinessBadge(['HEALTHY','RUNNING'].includes(w.status)?'READY':'REVIEW_REQUIRED')}</p><p><strong>Version:</strong> ${esc(w.app_version||'Unknown')}</p><p><strong>Last seen:</strong> ${esc(fmtDateTime(w.last_seen_at))}</p><p><strong>Age:</strong> ${w.age_seconds==null?'Unknown':esc(Math.round(w.age_seconds))+' seconds'}</p><p><strong>Storage configured:</strong> ${w.storage_configured?'Yes':'No'}</p><p><strong>Worker AI:</strong> ${w.details?.ai_enabled?'Enabled':'Disabled'}${w.details?.ai_model?` — ${esc(w.details.ai_model)}`:''}</p>`:'<div class="validation-item ERROR">No worker heartbeat has been recorded.</div>'}</section><section class="card"><h3>Storage and publication</h3><p>${o.storage.configured?'<span class="badge badge-success">STORAGE CONFIGURED</span>':'<span class="badge badge-danger">STORAGE NOT CONFIGURED</span>'}</p><p><strong>Mode:</strong> ${esc(o.storage.mode||'')}</p><p><strong>Last successful publication:</strong> ${o.last_successful_publication?esc(fmtDateTime(o.last_successful_publication.completed_at)):'None recorded'}</p></section></div>${o.ai.recent_failures?.length?`<section class="card"><h3>Recent AI failures</h3>${o.ai.recent_failures.map(item=>`<div class="validation-item ERROR"><strong>${esc(item.purpose.replaceAll('_',' '))}</strong><p>${esc(item.error||'No error detail')}</p><span class="help">${esc(fmtDateTime(item.created_at))}</span></div>`).join('')}</section>`:''}`;}
   if(tab==='capabilities') panel.innerHTML=`<div class="page-header"><div><h2>Controlled capability catalog</h2><p>Only approved, current capabilities are available for prospect recommendations and AI grounding.</p></div><button class="btn btn-primary" data-action="new-capability">Add capability</button></div><div class="table-wrap"><table><thead><tr><th>Code</th><th>Domain / version</th><th>Capability</th><th>Status</th><th>Lifecycle</th><th>Source / action</th></tr></thead><tbody>${data.capabilities.map(c=>`<tr><td>${esc(c.capability_code)}</td><td>${esc(c.domain)}${c.product_version?`<br><span class="badge badge-cyan">${esc(c.product_version)}</span>`:''}</td><td><strong>${esc(c.name)}</strong><br><span class="help">${esc(c.controlled_description)}</span></td><td><span class="badge ${c.status==='APPROVED'?'badge-success':c.status==='RETIRED'?'badge-danger':'badge-warning'}">${esc(c.status)}</span></td><td>Review due: ${fmtDate(c.review_due_at)}<br><span class="help">Last reviewed: ${fmtDate(c.last_reviewed_at)}</span></td><td>${esc(c.source||'')}<div class="card-actions"><button class="btn btn-ghost btn-small" data-action="edit-capability" data-id="${c.id}">Review / edit</button>${c.status==='PROPOSED'?`<button class="btn btn-primary btn-small" data-action="review-capability" data-id="${c.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-capability" data-id="${c.id}" data-decision="REJECTED">Retire</button>`:''}</div></td></tr>`).join('')}</tbody></table></div>`;
@@ -1567,7 +1479,15 @@ function showSectionPhotoUpload(section) {
 }
 
 function showDeleteProspect(id,name){showModal('Permanently delete prospect',`<p>This action permanently deletes the prospect workspace, reports, evidence, publications, and audit-linked customer data. A completed export is required.</p><form id="delete-prospect-form"><input type="hidden" name="prospect_id" value="${esc(id)}"><div class="field"><label>Type the prospect name to confirm</label><input name="confirm_name" required></div><label><input type="checkbox" name="confirm_exported" required> I confirm that the workspace export has been downloaded and retained.</label><button class="btn btn-danger btn-wide" type="submit">Permanently delete ${esc(name)}</button></form>`,'');}
-function showNewUser(){showModal('Create user',`<form id="user-form"><div class="field"><label>Username</label><input name="username" required></div><div class="field"><label>Display name</label><input name="display_name"></div><div class="field"><label>Email</label><input name="email" type="email" required></div><div class="field"><label>Temporary password</label><input name="password" type="password" minlength="14" required></div><div class="field"><label>Roles</label><label><input type="checkbox" name="roles" value="CONTRIBUTOR" checked> Contributor</label><label><input type="checkbox" name="roles" value="REVIEWER"> Reviewer</label><label><input type="checkbox" name="roles" value="OWNER"> Owner</label><label><input type="checkbox" name="roles" value="ADMIN"> Administrator</label></div><button class="btn btn-primary btn-wide" type="submit">Create user</button></form>`,'');}
+function showNewUser(){showModal('Create user',`<form id="user-form"><div class="field"><label>Username</label><input name="username" required></div><div class="field"><label>Display name</label><input name="display_name"></div><div class="field"><label>Email</label><input name="email" type="email" required></div><div class="validation-item INFO"><strong>Temporary password</strong><p>The configured administrator temporary password will be assigned automatically. The user must replace it on first login.</p></div><div class="field"><label>Roles</label><label><input type="checkbox" name="roles" value="CONTRIBUTOR" checked> Contributor</label><label><input type="checkbox" name="roles" value="REVIEWER"> Reviewer</label><label><input type="checkbox" name="roles" value="OWNER"> Owner</label><label><input type="checkbox" name="roles" value="ADMIN"> Administrator</label></div><button class="btn btn-primary btn-wide" type="submit">Create user</button></form>`,'');}
+
+function showResetUserPassword(userId,userName){showModal('Reset user password',`<p>Reset <strong>${esc(userName)}</strong> to the configured temporary password?</p><p class="help">All active sessions for this user will be revoked and the user must change the temporary password at next login.</p>`,`<button class="btn btn-ghost" data-action="close-modal">Cancel</button><button class="btn btn-primary" data-action="confirm-reset-user-password" data-user-id="${userId}">Reset password</button>`);}
+
+function showDeleteUser(userId,userName){
+  const candidates=(window.__adminData?.users||[]).filter(u=>u.id!==userId&&u.status==='ACTIVE'&&(u.roles.includes('OWNER')||u.roles.includes('ADMIN')));
+  showModal('Delete user',`<form id="delete-user-form"><input type="hidden" name="user_id" value="${userId}"><p>Delete <strong>${esc(userName)}</strong>?</p><p class="help">Access, roles, memberships, and sessions will be removed. Historical authorship and audit attribution are retained. If this user owns reports or engagements, select a replacement owner.</p><div class="field"><label>Replacement owner</label><select name="replacement_user_id"><option value="">None required / user owns no active work</option>${candidates.map(u=>`<option value="${u.id}">${esc(u.display_name||u.username)} (${esc(u.roles.join(', '))})</option>`).join('')}</select></div><button class="btn btn-danger btn-wide" type="submit">Delete user</button></form>`,'');
+}
+
 function showNewCapability(){showModal('Add controlled capability',`<form id="capability-form"><div class="grid grid-2"><div class="field"><label>Code</label><input name="capability_code" required></div><div class="field"><label>Domain</label><input name="domain" required></div></div><div class="grid grid-2"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Applicable product version</label><input name="product_version" placeholder="For example: Current SaaS release"></div></div><div class="field"><label>Controlled description</label><textarea name="controlled_description" required></textarea></div><div class="field"><label>Typical prerequisites</label><textarea name="typical_prerequisites"></textarea></div><div class="field"><label>Limitations</label><textarea name="limitations"></textarea></div><div class="grid grid-2"><div class="field"><label>Status</label><select name="status"><option>PROPOSED</option><option>APPROVED</option></select></div><div class="field"><label>Next review date</label><input name="review_due_at" type="datetime-local"></div></div><div class="field"><label>Source</label><input name="source"></div><button class="btn btn-primary btn-wide" type="submit">Add capability</button></form>`,'');}
 
 function showEditCapability(capabilityId) {
@@ -1702,6 +1622,7 @@ async function handleSubmit(event) {
       await route();
       return;
     }
+    if(form.id==='speech-settings-form'){const o=formObject(form);try{if(o.voice_uri)localStorage.setItem(SPEECH_VOICE_KEY,o.voice_uri);else localStorage.removeItem(SPEECH_VOICE_KEY);localStorage.setItem(SPEECH_RATE_KEY,String(Number(o.rate)||1));}catch{}closeModal();toast('Speech settings saved for this device.','success');return;}
     if(form.id==='prospect-onboarding-form'){
       const o=formObject(form);
       const createSite=o.create_site===true;
@@ -1793,7 +1714,8 @@ async function handleSubmit(event) {
     if(form.id==='delete-report-form'){const o=formObject(form);const prospect=state.report.report.prospect_id;await api(`/api/reports/${reportId}`,{method:'DELETE',body:o},false);closeModal();toast('Report permanently deleted.','success');location.hash=`#/prospect/${prospect}`;return;}
     if(form.id==='merge-form'){const o=formObject(form,['source_report_ids']);if(!o.source_report_ids?.length)throw new Error('Select at least one source report.');await api('/api/reports/merge',{method:'POST',body:o},false);closeModal();toast('Reports merged.','success');location.hash=`#/report/${o.target_report_id}`;route();return;}
     if(form.id==='delete-prospect-form'){const o=formObject(form);const id=o.prospect_id;delete o.prospect_id;await api(`/api/admin/prospects/${id}`,{method:'DELETE',body:o},false);closeModal();toast('Prospect permanently deleted.','success');renderAdmin();return;}
-    if(form.id==='user-form'){const o=formObject(form,['roles']);await api('/api/admin/users',{method:'POST',body:o});closeModal();toast('User created.','success');renderAdmin('users');return;}
+    if(form.id==='user-form'){const o=formObject(form,['roles']);await api('/api/admin/users',{method:'POST',body:o});closeModal();toast('User created with the configured temporary password.','success');renderAdmin('users');return;}
+    if(form.id==='delete-user-form'){const o=formObject(form);const id=o.user_id;delete o.user_id;o.replacement_user_id=o.replacement_user_id||null;await api(`/api/admin/users/${id}`,{method:'DELETE',body:o},false);closeModal();toast('User deleted and access revoked.','success');renderAdmin('users');return;}
     if(form.id==='capability-form'){const o=formObject(form);o.product_version=o.product_version||null;o.review_due_at=o.review_due_at||null;await api('/api/admin/capabilities',{method:'POST',body:o});closeModal();toast('Capability added.','success');renderAdmin('capabilities');return;}
     if(form.id==='capability-edit-form'){const o=formObject(form);const id=o.capability_id;delete o.capability_id;o.expected_version=Number(o.expected_version);o.product_version=o.product_version||null;o.review_due_at=o.review_due_at||null;await api(`/api/admin/capabilities/${id}`,{method:'PATCH',body:o});closeModal();toast('Capability updated.','success');renderAdmin('capabilities');return;}
     if(form.id==='knowledge-form'){const o=formObject(form);o.process_module=o.process_module||null;o.capability_id=o.capability_id||null;o.prospect_id=o.prospect_id||null;o.review_due_at=o.review_due_at||null;o.expires_at=o.expires_at||null;if(o.prospect_id&&o.reusable_across_prospects)throw new Error('Prospect-specific knowledge must be de-identified during review before it can be reusable.');await api('/api/admin/knowledge',{method:'POST',body:o});closeModal();toast('Knowledge entry created for review.','success');renderAdmin('knowledge');return;}
@@ -1813,6 +1735,11 @@ async function handleClick(event) {
     if(action==='close-modal'){closeModal();return;}
     if(action==='user-menu'){showUserMenu();return;}
     if(action==='change-password'){closeModal();showPasswordModal();return;}
+    if(action==='speech-settings'){closeModal();showSpeechSettings();return;}
+    if(action==='test-speech-voice'){testSpeechVoice();return;}
+    if(action==='reset-user-password'){showResetUserPassword(target.dataset.userId,target.dataset.userName);return;}
+    if(action==='confirm-reset-user-password'){await api(`/api/admin/users/${target.dataset.userId}/reset-password`,{method:'POST'},false);closeModal();toast('Password reset. The user must change the temporary password at next login.','success');await renderAdmin('users');return;}
+    if(action==='delete-user'){showDeleteUser(target.dataset.userId,target.dataset.userName);return;}
     if(action==='logout'){await api('/api/auth/logout',{method:'POST'},false);state.me=null;state.csrf=null;closeModal();renderLogin();return;}
     if(action==='new-prospect'){showNewProspect();return;}
     if(action==='prospect-tab'){renderProspect(state.prospect.prospect.id,target.dataset.tab);return;}
@@ -1847,8 +1774,6 @@ async function handleClick(event) {
     if(action==='review-evidence'){await api(`/api/reports/${reportId}/evidence/${target.dataset.id}/review`,{method:'POST',body:{include_in_report:target.dataset.include==='true'}});toast('Evidence disposition updated.','success');renderReport(reportId,section.id);return;}
     if(action==='resolve-comment'){await api(`/api/reports/${reportId}/comments/${target.dataset.id}/resolve`,{method:'POST'});renderReport(reportId,section.id);return;}
     if(action==='ai-enhance-observations'){await showAiEnhancement(section);return;}
-    if(action==='analyze-selected-photos'){await analyzeSelectedPhotos(section);return;}
-    if(action==='compare-photo-context'){await showPhotoContextRevision(section);return;}
     if(action==='section-version-history'){await showSectionContentHistory(section);return;}
     if(action==='generate-solution-approach'){await flushSolutionApproachSave(section);await showSolutionApproach(section);return;}
     if(action==='generate-targeted-benefits'){await flushSolutionApproachSave(section);await showTargetedBenefits(section);return;}
@@ -1859,9 +1784,6 @@ async function handleClick(event) {
     if(action==='refine-ai-enhancement'){await requestAiEnhancement(section,target.dataset.suggestionId);return;}
     if(action==='generate-new-ai-enhancement'||action==='generate-updated-ai-enhancement'){await requestAiEnhancement(section,null,{forceRegenerate:true});return;}
     if(action==='accept-ai-enhancement'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted from fast AI wording enhancement comparison.'}},false);toast('AI-enhanced current-operations wording accepted. Original input has been retained in version history.','success');closeModal();await renderReport(reportId,section.id);return;}
-    if(action==='refine-photo-context'){await requestPhotoContextRevision(section,target.dataset.suggestionId);return;}
-    if(action==='accept-photo-context'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted after comparing independent photo observations with Current Operations.'}},false);toast('Photo-supported Current Operations revision applied. The prior wording remains in version history.','success');closeModal();state.reportFocusAnchor='photo-analysis';await renderReport(reportId,section.id);return;}
-    if(action==='dismiss-photo-context'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'REJECTED',note:'Photo-context revision dismissed by user.'}},false);toast('Photo-context revision dismissed.','success');closeModal();return;}
     if(action==='refine-solution-approach'){await requestSolutionApproach(section,target.dataset.suggestionId);return;}
     if(action==='accept-solution-approach'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted from Cloud Inventory solution intelligence comparison.'}},false);toast('Cloud Inventory approach accepted and approved functionality mappings applied.','success');closeModal();await renderReport(reportId,section.id);return;}
     if(action==='refine-targeted-benefits'){await requestTargetedBenefits(section,target.dataset.suggestionId);return;}

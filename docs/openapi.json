@@ -1,6 +1,23 @@
 {
   "components": {
     "schemas": {
+      "AdminUserDeleteRequest": {
+        "properties": {
+          "replacement_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement User Id"
+          }
+        },
+        "title": "AdminUserDeleteRequest",
+        "type": "object"
+      },
       "AiRequest": {
         "properties": {
           "evidence_ids": {
@@ -51,8 +68,7 @@
               "SOLUTION_APPROACH",
               "TARGETED_BENEFITS",
               "DEMO_PLAN",
-              "REPORT_QUALITY_REVIEW",
-              "PHOTO_CONTEXT_REVISION"
+              "REPORT_QUALITY_REVIEW"
             ],
             "title": "Purpose",
             "type": "string"
@@ -1512,7 +1528,7 @@
           },
           "new_password": {
             "maxLength": 500,
-            "minLength": 14,
+            "minLength": 10,
             "title": "New Password",
             "type": "string"
           }
@@ -1522,24 +1538,6 @@
           "new_password"
         ],
         "title": "PasswordChangeRequest",
-        "type": "object"
-      },
-      "PhotoAnalysisRequest": {
-        "properties": {
-          "evidence_ids": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 50,
-            "minItems": 1,
-            "title": "Evidence Ids",
-            "type": "array"
-          }
-        },
-        "required": [
-          "evidence_ids"
-        ],
-        "title": "PhotoAnalysisRequest",
         "type": "object"
       },
       "ProspectArchiveRequest": {
@@ -2161,10 +2159,17 @@
             "type": "string"
           },
           "password": {
-            "maxLength": 500,
-            "minLength": 14,
-            "title": "Password",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
           },
           "roles": {
             "items": {
@@ -2182,8 +2187,7 @@
         },
         "required": [
           "username",
-          "email",
-          "password"
+          "email"
         ],
         "title": "UserCreate",
         "type": "object"
@@ -2243,7 +2247,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.5"
+    "version": "0.8.6"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2906,6 +2910,90 @@
           }
         },
         "summary": "Create User"
+      }
+    },
+    "/api/admin/users/{user_id}": {
+      "delete": {
+        "operationId": "admin_delete_user_api_admin_users__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Delete User"
+      }
+    },
+    "/api/admin/users/{user_id}/reset-password": {
+      "post": {
+        "operationId": "admin_reset_user_password_api_admin_users__user_id__reset_password_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Reset User Password"
       }
     },
     "/api/ai-jobs/{ai_job_id}": {
@@ -5374,62 +5462,6 @@
           }
         },
         "summary": "Upsert Demo Section Priority"
-      }
-    },
-    "/api/reports/{report_id}/sections/{section_id}/photo-analysis": {
-      "post": {
-        "operationId": "request_photo_analysis_api_reports__report_id__sections__section_id__photo_analysis_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "report_id",
-            "required": true,
-            "schema": {
-              "title": "Report Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "section_id",
-            "required": true,
-            "schema": {
-              "title": "Section Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PhotoAnalysisRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Request Photo Analysis"
       }
     },
     "/api/reports/{report_id}/sections/{section_id}/responses": {

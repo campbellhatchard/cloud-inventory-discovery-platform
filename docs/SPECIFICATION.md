@@ -2091,3 +2091,30 @@ The detailed interaction contract is maintained in `docs/PROSPECT_ONBOARDING_SPE
 The v0.8.5 feature build passed 99 automated tests across the complete regression suite, including seven dedicated configuration-intelligence tests, Python compilation, JavaScript syntax validation, OpenAPI generation, fresh migration and upgrade from the v0.8.4 database revision.
 
 The detailed interaction and governance contract is maintained in `docs/CONFIGURATION_INTELLIGENCE_SPEC_v0.8.5.md`.
+
+# 32. Controlled Enhancement Delta — User Administration, Evidence Privacy & Speech Preferences v0.8.6
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.8.6` |
+| Baseline | v0.8.5 Configuration Intelligence |
+| Development branch | `feature/user-admin-evidence-privacy-speech-v0.8.6` |
+| Migration | `k61h4c0f8d21` revises `j50g3b9e7c10` |
+
+## 32.1 User administration
+
+Administrators can reset another user's password and delete users through controlled soft deletion. Password reset assigns the environment-secret temporary password, revokes sessions, clears lockout state, and forces first-login change. Password minimum length is 10 with existing complexity controls retained. User deletion retains historical attribution, removes active access, blocks self deletion, and requires reassignment where the user owns reports or engagements.
+
+## 32.2 Photograph evidence privacy
+
+Photographs remain human-reviewed discovery evidence and publication content. The application no longer performs AI visual interpretation, does not send image bytes to an AI provider, and does not offer photo-to-text AI revision. Legacy pending photo jobs/suggestions are retired by migration and the cached photo-observation table is removed.
+
+## 32.3 Speech preferences
+
+Browser speech defaults to System / Browser Default. Users may choose a device/browser-exposed voice and Slow/Normal/Faster speaking rate. Preferences are stored locally per browser/device and unavailable voices fall back to default.
+
+## 32.4 Verification
+
+The v0.8.6 build must preserve all v0.8.5 Configuration Intelligence behavior, durable text-AI wording persistence, evidence capture and publication, while passing dedicated user administration, photograph-AI retirement, and speech-preference acceptance tests.
+
+The detailed contract is maintained in `docs/USER_ADMIN_EVIDENCE_PRIVACY_SPEECH_SPEC_v0.8.6.md`.

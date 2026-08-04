@@ -26,7 +26,7 @@ projects:
               - key: APP_COMPONENT
                 value: web
               - key: APP_VERSION
-                value: "0.8.5"
+                value: "0.8.6"
               - key: APP_BASE_URL
                 fromService:
                   type: web
@@ -41,6 +41,8 @@ projects:
               - key: BOOTSTRAP_ADMIN_PASSWORD
                 sync: false
               - key: BOOTSTRAP_ADMIN_EMAIL
+                sync: false
+              - key: DEFAULT_USER_TEMP_PASSWORD
                 sync: false
               - key: STORAGE_MODE
                 value: s3
@@ -94,7 +96,7 @@ projects:
               - key: APP_COMPONENT
                 value: worker
               - key: APP_VERSION
-                value: "0.8.5"
+                value: "0.8.6"
               - key: DATABASE_URL
                 fromDatabase:
                   name: __DATABASE_NAME__

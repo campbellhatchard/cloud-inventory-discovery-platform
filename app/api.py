@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Resp
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from PIL import Image, ImageOps
 from starlette.background import BackgroundTask
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -25,7 +25,6 @@ from .ai_service import (
     build_executive_summary_snapshot,
     build_observation_snapshot,
     observation_source_fingerprint,
-    build_photo_context_snapshot,
     build_report_quality_snapshot,
     build_solution_snapshot,
     build_targeted_benefits_snapshot,
@@ -67,7 +66,6 @@ from .models import (
     DemoSectionPriority,
     Engagement,
     EngagementMember,
-    EvidenceAiObservation,
     EvidenceItem,
     FileObject,
     Finding,
@@ -90,6 +88,7 @@ from .models import (
     Site,
     User,
     UserRole,
+    UserSession,
     ValidationRun,
     utcnow,
 )
@@ -112,8 +111,8 @@ from .schemas import (
     KnowledgeEntryReview,
     MergeRequest,
     MetricCreate,
+    AdminUserDeleteRequest,
     PasswordChangeRequest,
-    PhotoAnalysisRequest,
     ProspectArchiveRequest,
     ProspectCreate,
     ProspectOnboardingCreate,
@@ -613,17 +612,160 @@ def list_users(user: User = Depends(enforce_password_changed), db: Session = Dep
 
 
 @router.post("/admin/users", dependencies=[Depends(require_csrf)])
-def create_user(payload: UserCreate, actor: User = Depends(require_roles("ADMIN")), db: Session = Depends(get_db)):
+def create_user(
+    payload: UserCreate,
+    actor: User = Depends(require_roles("ADMIN")),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
     if db.scalar(select(User).where(or_(User.username == payload.username, User.email == str(payload.email)))):
         raise HTTPException(status_code=409, detail="Username or email already exists.")
-    new_user = User(username=payload.username, email=str(payload.email), display_name=payload.display_name, password_hash=hash_password(payload.password), force_password_change=True)
+    temporary_password = payload.password or settings.default_user_temp_password
+    if not temporary_password:
+        raise HTTPException(503, "The default temporary user password is not configured.")
+    if len(temporary_password) < 10:
+        raise HTTPException(500, "The configured temporary password does not meet the 10-character minimum.")
+    groups = [
+        any(c.islower() for c in temporary_password),
+        any(c.isupper() for c in temporary_password),
+        any(c.isdigit() for c in temporary_password),
+        any(not c.isalnum() for c in temporary_password),
+    ]
+    if sum(groups) < 3:
+        raise HTTPException(500, "The configured temporary password does not meet password complexity requirements.")
+    new_user = User(
+        username=payload.username,
+        email=str(payload.email),
+        display_name=payload.display_name,
+        password_hash=hash_password(temporary_password),
+        force_password_change=True,
+    )
     db.add(new_user)
     db.flush()
     for role in set(payload.roles):
         db.add(UserRole(user_id=new_user.id, role=role.upper()))
-    audit(db, actor=actor, action="USER_CREATED", target_type="USER", target_id=new_user.id, metadata={"roles": payload.roles})
+    audit(db, actor=actor, action="USER_CREATED", target_type="USER", target_id=new_user.id, metadata={"roles": payload.roles, "temporary_password_source": "CUSTOM" if payload.password else "CONFIGURED_DEFAULT"})
     db.commit()
     return _user_payload(db, new_user)
+
+
+@router.post("/admin/users/{user_id}/reset-password", dependencies=[Depends(require_csrf)])
+def admin_reset_user_password(
+    user_id: str,
+    actor: User = Depends(require_roles("ADMIN")),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    target = db.get(User, user_id)
+    if not target or target.status == "DELETED":
+        raise HTTPException(404, "User not found.")
+    if target.id == actor.id:
+        raise HTTPException(400, "Use Change password for your own account.")
+    temporary_password = settings.default_user_temp_password
+    if not temporary_password:
+        raise HTTPException(503, "The default temporary user password is not configured.")
+    if len(temporary_password) < 10:
+        raise HTTPException(500, "The configured temporary password does not meet the 10-character minimum.")
+    groups = [
+        any(c.islower() for c in temporary_password),
+        any(c.isupper() for c in temporary_password),
+        any(c.isdigit() for c in temporary_password),
+        any(not c.isalnum() for c in temporary_password),
+    ]
+    if sum(groups) < 3:
+        raise HTTPException(500, "The configured temporary password does not meet password complexity requirements.")
+    target.password_hash = hash_password(temporary_password)
+    target.force_password_change = True
+    target.failed_login_count = 0
+    target.locked_until = None
+    db.execute(delete(UserSession).where(UserSession.user_id == target.id))
+    audit(db, actor=actor, action="USER_PASSWORD_RESET", target_type="USER", target_id=target.id, metadata={"sessions_revoked": True, "force_password_change": True})
+    db.commit()
+    return {"ok": True, "force_password_change": True}
+
+
+@router.delete("/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
+def admin_delete_user(
+    user_id: str,
+    payload: AdminUserDeleteRequest,
+    actor: User = Depends(require_roles("ADMIN")),
+    db: Session = Depends(get_db),
+):
+    target = db.get(User, user_id)
+    if not target or target.status == "DELETED":
+        raise HTTPException(404, "User not found.")
+    if target.id == actor.id:
+        raise HTTPException(400, "You cannot delete your own administrator account.")
+
+    target_roles = user_roles(db, target.id)
+    if "ADMIN" in target_roles:
+        active_admin_count = db.scalar(
+            select(func.count())
+            .select_from(UserRole)
+            .join(User, User.id == UserRole.user_id)
+            .where(UserRole.role == "ADMIN", User.status == "ACTIVE")
+        ) or 0
+        if active_admin_count <= 1:
+            raise HTTPException(409, "The last active administrator cannot be deleted.")
+
+    owned_reports = list(db.scalars(select(Report).where(Report.owner_id == target.id)).all())
+    owned_engagements = list(db.scalars(select(Engagement).where(Engagement.owner_id == target.id)).all())
+    replacement = None
+    if owned_reports or owned_engagements:
+        if not payload.replacement_user_id:
+            raise HTTPException(409, "This user owns reports or engagements. Select an active replacement owner before deleting the user.")
+        replacement = db.get(User, payload.replacement_user_id)
+        if not replacement or replacement.status != "ACTIVE" or replacement.id == target.id:
+            raise HTTPException(400, "Replacement owner must be another active user.")
+        if not user_roles(db, replacement.id).intersection({"OWNER", "ADMIN"}):
+            raise HTTPException(400, "Replacement owner must have the Owner or Administrator role.")
+        affected_prospect_ids = {item.prospect_id for item in owned_reports} | {item.prospect_id for item in owned_engagements}
+        for prospect_id in affected_prospect_ids:
+            membership = db.get(ProspectMembership, {"prospect_id": prospect_id, "user_id": replacement.id})
+            if membership is None:
+                db.add(
+                    ProspectMembership(
+                        prospect_id=prospect_id,
+                        user_id=replacement.id,
+                        role_scope="OWNER",
+                        created_by=actor.id,
+                    )
+                )
+            elif membership.role_scope != "OWNER":
+                membership.role_scope = "OWNER"
+        db.execute(update(Report).where(Report.owner_id == target.id).values(owner_id=replacement.id))
+        db.execute(update(Engagement).where(Engagement.owner_id == target.id).values(owner_id=replacement.id))
+
+    if replacement is not None:
+        db.execute(update(ReportSection).where(ReportSection.assigned_to_user_id == target.id).values(assigned_to_user_id=replacement.id))
+    else:
+        db.execute(update(ReportSection).where(ReportSection.assigned_to_user_id == target.id).values(assigned_to_user_id=None))
+
+    db.execute(delete(UserSession).where(UserSession.user_id == target.id))
+    db.execute(delete(ProspectMembership).where(ProspectMembership.user_id == target.id))
+    db.execute(delete(ReportMember).where(ReportMember.user_id == target.id))
+    db.execute(delete(EngagementMember).where(EngagementMember.user_id == target.id))
+    db.execute(delete(UserRole).where(UserRole.user_id == target.id))
+    target.status = "DELETED"
+    target.failed_login_count = 0
+    target.locked_until = None
+    target.force_password_change = False
+    audit(
+        db,
+        actor=actor,
+        action="USER_DELETED",
+        target_type="USER",
+        target_id=target.id,
+        metadata={
+            "soft_delete": True,
+            "sessions_revoked": True,
+            "replacement_user_id": replacement.id if replacement else None,
+            "reassigned_reports": len(owned_reports),
+            "reassigned_engagements": len(owned_engagements),
+        },
+    )
+    db.commit()
+    return {"ok": True, "status": "DELETED", "replacement_user_id": replacement.id if replacement else None}
 
 
 @router.get("/prospects")
@@ -1057,10 +1199,6 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     evidence_items = list(db.scalars(select(EvidenceItem).where(EvidenceItem.report_id == report.id).order_by(EvidenceItem.created_at)).all())
     evidence_ids = [item.id for item in evidence_items]
     evidence_files = list(db.scalars(select(FileObject).where(FileObject.evidence_id.in_(evidence_ids))).all()) if evidence_ids else []
-    photo_analyses = list(
-        db.scalars(select(EvidenceAiObservation).where(EvidenceAiObservation.evidence_id.in_(evidence_ids))).all()
-    ) if evidence_ids else []
-    photo_analysis_by_evidence = {item.evidence_id: item for item in photo_analyses}
     files_by_evidence: dict[str, dict[str, FileObject]] = {}
     for file_obj in evidence_files:
         if not file_obj.evidence_id:
@@ -1153,14 +1291,6 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
             "status": item.status, "extraction_state": item.extraction_state,
             "has_extracted_text": bool(item.extracted_text),
             "ai_inclusion_recommendation": item.ai_inclusion_recommendation,
-            "photo_analysis": None if item.id not in photo_analysis_by_evidence else {
-                "id": photo_analysis_by_evidence[item.id].id,
-                "model": photo_analysis_by_evidence[item.id].model,
-                "source_file_sha256": photo_analysis_by_evidence[item.id].source_file_sha256,
-                "content": photo_analysis_by_evidence[item.id].content,
-                "created_at": _iso(photo_analysis_by_evidence[item.id].created_at),
-                "updated_at": _iso(photo_analysis_by_evidence[item.id].updated_at),
-            },
             "file": None if not files_by_evidence.get(item.id, {}).get("ORIGINAL") else {
                 "id": files_by_evidence[item.id]["ORIGINAL"].id,
                 "file_name": files_by_evidence[item.id]["ORIGINAL"].file_name,
@@ -2089,9 +2219,6 @@ def bulk_manage_evidence(
         touched_section_ids.add(target.id)
         for item in items:
             item.section_id = target.id
-            observation = db.scalar(select(EvidenceAiObservation).where(EvidenceAiObservation.evidence_id == item.id))
-            if observation:
-                observation.section_id = target.id
         action_name = "EVIDENCE_BULK_MOVED"
         metadata = {"report_id": report.id, "evidence_ids": payload.evidence_ids, "target_section_id": target.id}
     else:
@@ -2335,121 +2462,6 @@ def ai_status(user: User = Depends(enforce_password_changed), settings: Settings
     return {"enabled": settings.ai_enabled, "confidential_content_enabled": settings.ai_confidential_content_enabled, "data_control_mode": settings.openai_data_control_mode, "model": settings.openai_model, "policy": decision.as_dict()}
 
 
-@router.post(
-    "/reports/{report_id}/sections/{section_id}/photo-analysis",
-    dependencies=[Depends(require_csrf)],
-    status_code=status.HTTP_202_ACCEPTED,
-)
-def request_photo_analysis(
-    report_id: str,
-    section_id: str,
-    payload: PhotoAnalysisRequest,
-    user: User = Depends(enforce_password_changed),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-):
-    report = _get_report(db, report_id)
-    require_report_access(db, user, report)
-    section = db.get(ReportSection, section_id)
-    if not section or section.report_id != report.id:
-        raise HTTPException(404, "Report section not found.")
-
-    decision = evaluate_policy(settings, contains_prospect_confidential_content=True)
-    if not decision.allowed:
-        raise HTTPException(status_code=403, detail={"message": decision.reason, "policy": decision.as_dict()})
-
-    results: list[dict[str, Any]] = []
-    for evidence_id in list(dict.fromkeys(payload.evidence_ids)):
-        evidence = db.get(EvidenceItem, evidence_id)
-        if (
-            not evidence
-            or evidence.report_id != report.id
-            or evidence.section_id != section.id
-            or evidence.evidence_type != "PHOTO"
-        ):
-            raise HTTPException(400, "One or more selected photographs are not available in this section.")
-        image_files = list(
-            db.scalars(
-                select(FileObject).where(
-                    FileObject.evidence_id == evidence.id,
-                    FileObject.mime_type.like("image/%"),
-                )
-            ).all()
-        )
-        if not image_files:
-            raise HTTPException(409, f"Photograph {evidence.id} does not have an analyzable image file.")
-        image_files.sort(
-            key=lambda item: (
-                0 if item.variant == "WEB" else 1 if item.variant == "ORIGINAL" else 2,
-                item.created_at,
-            )
-        )
-        source_file = image_files[0]
-        cached = db.scalar(
-            select(EvidenceAiObservation).where(EvidenceAiObservation.evidence_id == evidence.id)
-        )
-        if cached and cached.source_file_sha256 == source_file.sha256:
-            results.append(
-                {
-                    "evidence_id": evidence.id,
-                    "status": "CACHED",
-                    "analysis_id": cached.id,
-                    "ai_job_id": None,
-                }
-            )
-            continue
-
-        job = AiJob(
-            report_id=report.id,
-            section_id=section.id,
-            purpose="PHOTO_ANALYSIS",
-            instructions=None,
-            model=settings.openai_model,
-            policy_decision=decision.as_dict(),
-            context_snapshot={
-                "purpose": "PHOTO_ANALYSIS",
-                "report": {"id": report.id, "revision": report.revision},
-                "section": {"id": section.id, "version": section.version},
-                "evidence_id": evidence.id,
-                "source_file_sha256": source_file.sha256,
-            },
-            status="QUEUED",
-            requested_by=user.id,
-        )
-        db.add(job)
-        db.flush()
-        enqueue(
-            db,
-            "ai.generate",
-            {"ai_job_id": job.id},
-            max_attempts=3,
-            queue_name="PHOTO_ANALYSIS",
-            priority=50,
-        )
-        audit(
-            db,
-            actor=user,
-            action="PHOTO_ANALYSIS_QUEUED",
-            target_type="AI_JOB",
-            target_id=job.id,
-            prospect_id=report.prospect_id,
-            metadata={"evidence_id": evidence.id, "section_id": section.id},
-        )
-        results.append(
-            {
-                "evidence_id": evidence.id,
-                "status": "QUEUED",
-                "analysis_id": None,
-                "ai_job_id": job.id,
-            }
-        )
-    db.commit()
-    return {
-        "jobs": results,
-        "message": "Independent photograph analysis queued. You may continue working while it runs.",
-    }
-
-
 @router.get("/reports/{report_id}/sections/{section_id}/ai-wording/current")
 def get_current_ai_wording(
     report_id: str,
@@ -2560,7 +2572,7 @@ def request_ai(
         if payload.evidence_ids:
             raise HTTPException(
                 400,
-                "Photographs are analyzed independently in AI Photo Analysis. AI Enhanced Wording is text-only in v0.8.5.",
+                "AI enhancement is text-only. Photographs remain human-reviewed evidence and are never sent to AI.",
             )
         context_snapshot = build_observation_snapshot(db, report, section, [])
         source_fingerprint = str(
@@ -2618,28 +2630,7 @@ def request_ai(
                     restored=True,
                     message="The existing AI wording request is still processing.",
                 )
-    elif payload.purpose == "PHOTO_CONTEXT_REVISION":
-        if not section:
-            raise HTTPException(400, "Photo-context revision requires a report section.")
-        selected_photo_ids = payload.evidence_ids
-        if payload.parent_suggestion_id:
-            parent_suggestion = db.get(AiSuggestion, payload.parent_suggestion_id)
-            if (
-                not parent_suggestion
-                or parent_suggestion.report_id != report.id
-                or parent_suggestion.section_id != section.id
-                or parent_suggestion.purpose != "PHOTO_CONTEXT_REVISION"
-            ):
-                raise HTTPException(400, "Parent photo-context suggestion does not belong to this section.")
-            if not selected_photo_ids:
-                parent_snapshot = dict((parent_suggestion.content or {}).get("source_snapshot") or {})
-                selected_photo_ids = list(parent_snapshot.get("selected_evidence_ids") or [])
-        try:
-            context_snapshot = build_photo_context_snapshot(db, report, section, selected_photo_ids)
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        if not context_snapshot.get("sources"):
-            raise HTTPException(409, "Enter written Current Operations context before comparing photo analysis to the narrative.")
+
     elif payload.purpose == "SOLUTION_APPROACH":
         if not section:
             raise HTTPException(400, "Cloud Inventory approach generation requires a report section.")
@@ -2735,7 +2726,6 @@ def request_ai(
         )
     queue_name = {
         "OBSERVATION_ENHANCEMENT": "FAST_TEXT",
-        "PHOTO_CONTEXT_REVISION": "GENERAL_AI",
     }.get(payload.purpose, "GENERAL_AI")
     priority = 10 if queue_name == "FAST_TEXT" else 100
     enqueue(
@@ -2766,7 +2756,6 @@ def request_ai(
         "DEMO_PLAN": "Customer-specific demo plan queued for generation and human review.",
         "REPORT_QUALITY_REVIEW": "Whole-report quality review queued.",
         "EXECUTIVE_SUMMARY": "Executive summary queued for generation and human review.",
-        "PHOTO_CONTEXT_REVISION": "Photo observations queued for comparison with the written Current Operations narrative.",
     }
     message = messages.get(payload.purpose, "AI enhancement queued for generation and human review.")
     return {
@@ -2805,7 +2794,7 @@ def review_ai(
     # Observation enhancement is equivalent to a collaborative narrative edit,
     # so any report contributor may accept it. Other AI recommendations retain
     # the reviewer requirement.
-    if suggestion.purpose in {"OBSERVATION_ENHANCEMENT", "PHOTO_CONTEXT_REVISION", "TARGETED_BENEFITS", "DEMO_PLAN"}:
+    if suggestion.purpose in {"OBSERVATION_ENHANCEMENT", "TARGETED_BENEFITS", "DEMO_PLAN"}:
         require_report_access(db, user, report)
     else:
         require_report_access(db, user, report, "REVIEWER")
@@ -2823,7 +2812,7 @@ def review_ai(
         target_section = db.get(ReportSection, suggestion.section_id) if suggestion.section_id else None
         suggested_text = str(content.get("enhanced_text") or content.get("suggested_text") or content.get("summary") or "").strip()
 
-        if suggestion.purpose in {"OBSERVATION_ENHANCEMENT", "PHOTO_CONTEXT_REVISION"}:
+        if suggestion.purpose == "OBSERVATION_ENHANCEMENT":
             if not target_section:
                 raise HTTPException(409, "The target section is no longer available.")
             if content.get("verification_status") != "PASSED" or not content.get("accept_allowed", False):
@@ -2887,7 +2876,7 @@ def review_ai(
                     content_type="CURRENT_OPERATIONS",
                     version=_next_content_version(db, target_section.id),
                     text=suggested_text,
-                    source_type="AI_PHOTO_CONTEXT" if suggestion.purpose == "PHOTO_CONTEXT_REVISION" else "AI_ACCEPTED",
+                    source_type="AI_ACCEPTED",
                     source_refs=content.get("source_refs") or [],
                     ai_suggestion_id=suggestion.id,
                     is_current=True,

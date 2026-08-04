@@ -277,9 +277,9 @@ def test_frontend_ai_comparison_and_tts_contract():
     assert "speechSynthesis" in app_js
     assert 'data-action="refine-ai-enhancement"' in app_js
     assert 'data-action="accept-ai-enhancement"' in app_js
-    assert 'id="photo-analysis"' in app_js
-    assert 'data-action="analyze-selected-photos"' in app_js
-    assert 'data-action="compare-photo-context"' in app_js
+    assert 'id="photo-analysis"' not in app_js
+    assert 'data-action="analyze-selected-photos"' not in app_js
+    assert 'data-action="compare-photo-context"' not in app_js
     assert 'id="ai-photo-picker"' not in app_js
     assert ".ai-comparison-grid" in styles
 
@@ -327,7 +327,7 @@ def test_observation_request_rejects_evidence_from_another_section(admin_session
             headers=h,
         )
         assert requested.status_code == 400
-        assert "Photographs are analyzed independently" in requested.json()["detail"]
+        assert "never sent to AI" in requested.json()["detail"]
     finally:
         settings.ai_enabled, settings.ai_confidential_content_enabled, settings.openai_data_control_mode, settings.openai_api_key = old
 

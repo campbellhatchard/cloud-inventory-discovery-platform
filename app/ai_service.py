@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import re
@@ -22,9 +21,7 @@ from .models import (
     DemoPlanSettings,
     DemoPlanVersion,
     DemoSectionPriority,
-    EvidenceAiObservation,
     EvidenceItem,
-    FileObject,
     Finding,
     KnowledgeEntry,
     Metric,
@@ -37,7 +34,6 @@ from .models import (
     User,
     utcnow,
 )
-from .storage import ObjectStorage
 
 
 @dataclass
@@ -395,15 +391,6 @@ def run_ai(settings: Settings, context: dict[str, Any]) -> tuple[dict[str, Any],
     return _call_json(settings, system=system, user_content=json.dumps(context, ensure_ascii=False))
 
 
-def _image_file(db: Session, evidence_id: str) -> FileObject | None:
-    files = list(db.scalars(select(FileObject).where(FileObject.evidence_id == evidence_id)).all())
-    images = [item for item in files if item.mime_type.startswith("image/")]
-    if not images:
-        return None
-    images.sort(key=lambda item: (0 if item.variant == "WEB" else 1 if item.variant == "ORIGINAL" else 2, item.created_at))
-    return images[0]
-
-
 def _merge_usage(items: list[dict[str, Any]]) -> dict[str, Any]:
     totals: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": len(items)}
     for item in items:
@@ -413,109 +400,6 @@ def _merge_usage(items: list[dict[str, Any]]) -> dict[str, Any]:
                 totals[key] += value
     totals["details"] = items
     return totals
-
-
-def _photo_observation(
-    db: Session,
-    settings: Settings,
-    evidence: EvidenceItem,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Analyze the image independently of customer narrative or captions.
-
-    A low-detail visual pass is the default. The model may request one high-detail
-    pass only when fine visual detail is material to the operational observation.
-    Results are cached by image SHA so moving the same photograph between sections
-    does not trigger another vision call unless the underlying image changes.
-    """
-    file_obj = _image_file(db, evidence.id)
-    if not file_obj:
-        return {
-            "visible_observations": [],
-            "operational_interpretations": [],
-            "uncertainties": ["The selected evidence item is not an image and was not visually analyzed."],
-            "detail_used": None,
-            "detail_escalation_reason": None,
-        }, {}
-
-    cached = db.scalar(select(EvidenceAiObservation).where(EvidenceAiObservation.evidence_id == evidence.id))
-    if cached and cached.source_file_sha256 == file_obj.sha256:
-        return dict(cached.content), {"cached": True, "calls": 0}
-
-    storage = ObjectStorage(settings)
-    image_bytes = storage.get_bytes(file_obj.storage_key)
-    encoded = base64.b64encode(image_bytes).decode("ascii")
-    system = (
-        "Analyze this site-walk photograph independently. You have no written process context. "
-        "Describe only what the pixels visibly support. Keep operational interpretations cautious and separate from visible facts. "
-        "Do not infer identity, company policy, process frequency, performance, financial impact, root cause, hidden system behavior, or workflow state that is not visible. "
-        "If fine labels, screens, small objects, or dense spatial detail could materially change the operational observation, request high detail; otherwise do not. "
-        "Return only JSON with keys visible_observations, operational_interpretations, uncertainties, detail_escalation_required, detail_escalation_reason. "
-        "The first three values must be arrays of short strings. detail_escalation_required must be a boolean."
-    )
-
-    def analyze(detail: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        user_content = [
-            {
-                "type": "input_text",
-                "text": (
-                    f"Evidence reference: evidence:{evidence.id}. "
-                    "Analyze the photograph itself. Do not use or infer any written discovery context."
-                ),
-            },
-            {
-                "type": "input_image",
-                "image_url": f"data:{file_obj.mime_type};base64,{encoded}",
-                "detail": detail,
-            },
-        ]
-        return _call_json(
-            settings,
-            system=system,
-            user_content=user_content,
-            reasoning_effort="low",
-            verbosity="low",
-            max_output_tokens=1400,
-        )
-
-    usage_items: list[dict[str, Any]] = []
-    content, usage = analyze("low")
-    if usage:
-        usage_items.append(usage)
-    detail_used = "low"
-    escalation_reason = str(content.get("detail_escalation_reason") or "").strip() or None
-    if bool(content.get("detail_escalation_required")):
-        content, high_usage = analyze("high")
-        if high_usage:
-            usage_items.append(high_usage)
-        detail_used = "high"
-        escalation_reason = escalation_reason or str(content.get("detail_escalation_reason") or "").strip() or None
-
-    normalized = {
-        "visible_observations": [str(item) for item in content.get("visible_observations") or []],
-        "operational_interpretations": [str(item) for item in content.get("operational_interpretations") or []],
-        "uncertainties": [str(item) for item in content.get("uncertainties") or []],
-        "detail_used": detail_used,
-        "detail_escalation_reason": escalation_reason,
-    }
-    if cached:
-        cached.model = settings.openai_model
-        cached.source_file_sha256 = file_obj.sha256
-        cached.content = normalized
-        cached.section_id = evidence.section_id
-        cached.report_id = evidence.report_id
-    else:
-        db.add(
-            EvidenceAiObservation(
-                evidence_id=evidence.id,
-                report_id=evidence.report_id,
-                section_id=evidence.section_id,
-                model=settings.openai_model,
-                source_file_sha256=file_obj.sha256,
-                content=normalized,
-            )
-        )
-    db.flush()
-    return normalized, _merge_usage(usage_items)
 
 
 def _allowed_source_refs(snapshot: dict[str, Any]) -> set[str]:
@@ -541,7 +425,6 @@ def _normalize_source_refs(value: Any, allowed: set[str]) -> list[dict[str, Any]
 def _verify_observation_text(
     settings: Settings,
     snapshot: dict[str, Any],
-    photo_observations: list[dict[str, Any]],
     enhanced_text: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     system = (
@@ -551,8 +434,7 @@ def _verify_observation_text(
         "verification_status is PASSED only when every factual claim is supported; otherwise BLOCKED. unsupported_claims is an array of objects with text and reason."
     )
     payload = {
-        "sources": snapshot.get("sources") or [],
-        "photo_observations": photo_observations,
+        "sources": [item for item in snapshot.get("sources") or [] if item.get("type") != "PHOTO"],
         "proposed_text": enhanced_text,
     }
     result, usage = _call_json(
@@ -667,7 +549,7 @@ def finalize_observation_draft(
     """Verify the already-visible text draft and make at most one repair pass."""
     usage_items: list[dict[str, Any]] = []
     enhanced_text = str(draft_content.get("enhanced_text") or "").strip()
-    verification, verify_usage = _verify_observation_text(settings, snapshot, [], enhanced_text)
+    verification, verify_usage = _verify_observation_text(settings, snapshot, enhanced_text)
     usage_items.append(verify_usage)
 
     if verification["verification_status"] == "BLOCKED" and verification["unsupported_claims"]:
@@ -692,7 +574,7 @@ def finalize_observation_draft(
         repaired_text = str(repaired.get("enhanced_text") or "").strip()
         if repaired_text:
             enhanced_text = repaired_text
-            verification, verify_usage_2 = _verify_observation_text(settings, snapshot, [], enhanced_text)
+            verification, verify_usage_2 = _verify_observation_text(settings, snapshot, enhanced_text)
             usage_items.append(verify_usage_2)
 
     content = dict(draft_content)
@@ -719,157 +601,6 @@ def run_observation_enhancement(
     final, verify_usage = finalize_observation_draft(settings, snapshot, draft)
     return final, _merge_usage([draft_usage, verify_usage])
 
-
-def build_photo_context_snapshot(
-    db: Session,
-    report: Report,
-    section: ReportSection,
-    evidence_ids: list[str] | None = None,
-) -> dict[str, Any]:
-    """Combine stored independent photo observations with written discovery context."""
-    written = build_observation_snapshot(db, report, section, [])
-    selected_ids = list(dict.fromkeys(evidence_ids or []))
-    stmt = (
-        select(EvidenceAiObservation, EvidenceItem)
-        .join(EvidenceItem, EvidenceAiObservation.evidence_id == EvidenceItem.id)
-        .where(
-            EvidenceAiObservation.report_id == report.id,
-            EvidenceItem.report_id == report.id,
-            EvidenceItem.section_id == section.id,
-            EvidenceItem.evidence_type == "PHOTO",
-        )
-        .order_by(EvidenceItem.created_at)
-    )
-    if selected_ids:
-        stmt = stmt.where(EvidenceItem.id.in_(selected_ids))
-    rows = list(db.execute(stmt).all())
-    if selected_ids:
-        found = {evidence.id for _, evidence in rows}
-        missing = [item_id for item_id in selected_ids if item_id not in found]
-        if missing:
-            raise ValueError("One or more selected photographs have not completed independent AI analysis.")
-    if not rows:
-        raise ValueError("Analyze at least one photograph before comparing photographs to Current Operations.")
-    photos = [
-        {
-            "ref": f"evidence:{evidence.id}",
-            "evidence_id": evidence.id,
-            "caption": evidence.caption,
-            "analysis": dict(analysis.content or {}),
-            "model": analysis.model,
-            "source_file_sha256": analysis.source_file_sha256,
-        }
-        for analysis, evidence in rows
-    ]
-    return {
-        "purpose": "PHOTO_CONTEXT_REVISION",
-        "report": written["report"],
-        "section": written["section"],
-        "sources": [item for item in written.get("sources") or [] if item.get("type") != "PHOTO"],
-        "photo_observations": photos,
-        "selected_evidence_ids": [item["evidence_id"] for item in photos],
-    }
-
-
-def run_photo_context_revision(
-    settings: Settings,
-    snapshot: dict[str, Any],
-    instructions: str | None,
-    prior_suggestion: AiSuggestion | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    usage_items: list[dict[str, Any]] = []
-    prior_text = ""
-    if prior_suggestion:
-        prior_text = str((prior_suggestion.content or {}).get("suggested_text") or "").strip()
-    system = (
-        "Compare independent site-photo observations with the written CURRENT-operations discovery. "
-        "The photo observations were created without written context. Use the written material only now to interpret relevance. "
-        "Classify what the photos support, what useful context they add, any potential conflict, and any open question. "
-        "Then suggest a revised current-operations narrative using only facts supported by the written sources or independent photo observations. "
-        "Do not add solution language, benefits, hidden process state, root cause, frequency, performance, or financial claims. "
-        "Return only JSON with supports, adds_context, potential_conflicts, open_questions, suggested_text, source_refs, claims."
-    )
-    request_payload = {
-        "section": snapshot.get("section"),
-        "written_sources": snapshot.get("sources") or [],
-        "independent_photo_observations": snapshot.get("photo_observations") or [],
-        "user_refinement_instruction": instructions or None,
-        "prior_suggested_text": prior_text or None,
-    }
-    generated, usage = _call_json(
-        settings,
-        system=system,
-        user_content=json.dumps(request_payload, ensure_ascii=False),
-        reasoning_effort="low",
-        verbosity="low",
-        max_output_tokens=2200,
-    )
-    usage_items.append(usage)
-    suggested_text = str(generated.get("suggested_text") or generated.get("enhanced_text") or "").strip()
-    if not suggested_text:
-        raise ValueError("AI did not return a photo-context revision.")
-    verification_photo_payload = [
-        {
-            "ref": photo.get("ref"),
-            **dict(photo.get("analysis") or {}),
-        }
-        for photo in snapshot.get("photo_observations") or []
-    ]
-    verification, verify_usage = _verify_observation_text(settings, snapshot, verification_photo_payload, suggested_text)
-    usage_items.append(verify_usage)
-    if verification["verification_status"] == "BLOCKED" and verification["unsupported_claims"]:
-        repair_system = (
-            "Rewrite the proposed narrative to remove every unsupported claim. Use only supplied written sources and independent photo observations. "
-            "Do not add new facts. Return only JSON with suggested_text."
-        )
-        repaired, repair_usage = _call_json(
-            settings,
-            system=repair_system,
-            user_content=json.dumps({
-                "written_sources": snapshot.get("sources") or [],
-                "photo_observations": snapshot.get("photo_observations") or [],
-                "proposed_text": suggested_text,
-                "unsupported_claims": verification["unsupported_claims"],
-            }, ensure_ascii=False),
-            reasoning_effort="low",
-            verbosity="low",
-            max_output_tokens=1800,
-        )
-        usage_items.append(repair_usage)
-        repaired_text = str(repaired.get("suggested_text") or repaired.get("enhanced_text") or "").strip()
-        if repaired_text:
-            suggested_text = repaired_text
-            verification, verify_usage_2 = _verify_observation_text(settings, snapshot, verification_photo_payload, suggested_text)
-            usage_items.append(verify_usage_2)
-
-    allowed = {str(item.get("ref")) for item in snapshot.get("sources") or [] if item.get("ref")}
-    allowed.update(str(item.get("ref")) for item in snapshot.get("photo_observations") or [] if item.get("ref"))
-    source_refs = _normalize_source_refs(generated.get("source_refs"), allowed)
-    if not source_refs:
-        source_refs = [
-            {"ref": str(item.get("ref")), "label": str(item.get("label") or item.get("caption") or item.get("ref"))}
-            for item in [*(snapshot.get("sources") or []), *(snapshot.get("photo_observations") or [])]
-            if item.get("ref")
-        ]
-    content = {
-        "original_text": str(snapshot.get("section", {}).get("original_narrative") or ""),
-        "source_snapshot": snapshot,
-        "supports": generated.get("supports") or [],
-        "adds_context": generated.get("adds_context") or [],
-        "potential_conflicts": generated.get("potential_conflicts") or [],
-        "open_questions": generated.get("open_questions") or [],
-        "suggested_text": suggested_text,
-        "enhanced_text": suggested_text,
-        "claims": generated.get("claims") or [],
-        "source_refs": source_refs,
-        "verification_status": verification["verification_status"],
-        "unsupported_claims": verification["unsupported_claims"],
-        "accept_allowed": verification["verification_status"] == "PASSED",
-        "refinement_instruction": instructions,
-        "parent_suggestion_id": prior_suggestion.id if prior_suggestion else None,
-        "source_section_version": snapshot.get("section", {}).get("version"),
-    }
-    return content, _merge_usage(usage_items)
 
 def _terms(value: str) -> set[str]:
     stop = {
@@ -2313,44 +2044,6 @@ def process_ai_job(db: Session, ai_job_id: str, settings: Settings) -> AiSuggest
                 "verification_and_repair": verify_ms,
                 "total": int((time.perf_counter() - overall_started) * 1000),
             }
-        elif job.purpose == "PHOTO_ANALYSIS":
-            if not section:
-                raise ValueError("Photo analysis requires a report section")
-            snapshot = dict(job.context_snapshot or {})
-            evidence_id = str(snapshot.get("evidence_id") or "")
-            evidence = db.get(EvidenceItem, evidence_id)
-            if not evidence or evidence.report_id != report.id or evidence.section_id != section.id:
-                raise ValueError("Photo analysis evidence is no longer available in this report section")
-            photo_started = time.perf_counter()
-            observation, usage = _photo_observation(db, settings, evidence)
-            photo_ms = int((time.perf_counter() - photo_started) * 1000)
-            usage = dict(usage or {})
-            usage["timing_ms"] = {"photo_analysis": photo_ms, "total": photo_ms}
-            content = {
-                "evidence_id": evidence.id,
-                "source_refs": [{"ref": f"evidence:{evidence.id}", "label": "Independent photograph analysis"}],
-                "verification_status": "PASSED",
-                "accept_allowed": False,
-                **observation,
-            }
-        elif job.purpose == "PHOTO_CONTEXT_REVISION":
-            if not section:
-                raise ValueError("Photo-context revision requires a report section")
-            snapshot = dict(job.context_snapshot or {})
-            if not snapshot:
-                snapshot = build_photo_context_snapshot(db, report, section, [])
-            parent = db.get(AiSuggestion, job.parent_suggestion_id) if job.parent_suggestion_id else None
-            if parent and (
-                parent.report_id != report.id
-                or parent.section_id != section.id
-                or parent.purpose != "PHOTO_CONTEXT_REVISION"
-            ):
-                raise ValueError("Parent photo-context suggestion does not belong to this report section")
-            context_started = time.perf_counter()
-            content, usage = run_photo_context_revision(settings, snapshot, job.instructions, parent)
-            context_ms = int((time.perf_counter() - context_started) * 1000)
-            usage = dict(usage or {})
-            usage["timing_ms"] = {"photo_context_revision": context_ms, "total": context_ms}
         elif job.purpose == "SOLUTION_APPROACH":
             if not section:
                 raise ValueError("Cloud Inventory approach generation requires a report section")

@@ -144,7 +144,7 @@ AI is available only when enabled by administrators and privacy policy. AI outpu
 
 ### Fast AI Enhanced Wording
 
-Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. The workflow is text-only and uses the section narrative, guided responses, formal findings, and relevant metrics. Photograph analysis remains separate.
+Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. The workflow is text-only and uses the section narrative, guided responses, formal findings, and relevant metrics. Photographs are human-reviewed evidence and are never sent to AI for interpretation.
 
 1. Select **AI Enhance**.
 2. The application first checks the database for an active unaccepted suggestion created from the same written sources.
@@ -158,30 +158,13 @@ Use **AI Enhance** on Current Operations when the written discovery is ready to 
 
 Closing the AI window does not cancel the background job. Pending wording and processing status are database-backed and can be restored later.
 
-### Independent AI Photo Analysis
+### Photographs and AI privacy
 
-Photographs are analyzed separately from written wording. The first visual-analysis stage does not receive Current Operations, guided responses, or the photo caption as process context. This reduces the risk that written assumptions influence what the model claims to see.
+Photographs remain normal discovery evidence for human review, captions, section placement, and report publication. The application does not send photograph pixels or image derivatives to an AI provider and does not generate AI visual interpretations or photo-to-text revisions. Human-entered photograph captions remain ordinary written evidence and may be used by text workflows where otherwise applicable.
 
-1. Open the operational section and locate **AI Photo Analysis**.
-2. Select one or more photographs.
-3. Select **Analyze selected photos**.
-4. Each photograph is processed as an independent background job.
-5. Review the resulting **Visible observations**, **Cautious operational interpretations**, and **Uncertainties**.
-6. The first visual pass uses low-detail processing; the system may request one high-detail pass when small labels, screens, or dense visual detail could materially change the observation.
-7. Completed analysis is cached against the image SHA, so moving the same photograph to another section does not require the image to be analyzed again unless the underlying image changes.
+### Speech settings
 
-### Compare photos with Current Operations
-
-After at least one photograph has completed independent analysis, use **Compare to Current Operations**. This second stage uses the stored photo observations and the written discovery; it does not send the original image again.
-
-The comparison separates:
-
-- what the photograph supports in the written description;
-- additional visibly supported context;
-- potential conflicts; and
-- open questions that cannot safely be concluded.
-
-The system then proposes a revised Current Operations narrative. Review, refine, apply, or dismiss the suggestion. Applying it creates a new controlled Current Operations version with source type `AI_PHOTO_CONTEXT`; the previous wording remains in version history.
+Text-to-speech uses **System / Browser Default** unless you select another voice exposed by the current browser/device. Open the account menu and select **Speech settings** to choose a voice and speaking speed or test the selection. Speech preferences are stored only on that browser/device. If a selected voice is no longer available, the application falls back to System / Browser Default.
 
 ### Other AI assistance
 

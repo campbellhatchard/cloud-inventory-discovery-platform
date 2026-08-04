@@ -13,7 +13,7 @@ class LoginRequest(BaseModel):
 
 class PasswordChangeRequest(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=14, max_length=500)
+    new_password: str = Field(min_length=10, max_length=500)
 
     @field_validator("new_password")
     @classmethod
@@ -28,8 +28,22 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=100)
     email: EmailStr
     display_name: str | None = Field(default=None, max_length=200)
-    password: str = Field(min_length=14, max_length=500)
+    password: str | None = Field(default=None, min_length=10, max_length=500)
     roles: list[str] = Field(default_factory=lambda: ["CONTRIBUTOR"])
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        groups = [any(c.islower() for c in value), any(c.isupper() for c in value), any(c.isdigit() for c in value), any(not c.isalnum() for c in value)]
+        if sum(groups) < 3:
+            raise ValueError("Password must contain at least three of: lowercase, uppercase, number, symbol.")
+        return value
+
+
+class AdminUserDeleteRequest(BaseModel):
+    replacement_user_id: str | None = None
 
 
 class ProspectCreate(BaseModel):
@@ -226,16 +240,11 @@ class AiRequest(BaseModel):
         "TARGETED_BENEFITS",
         "DEMO_PLAN",
         "REPORT_QUALITY_REVIEW",
-        "PHOTO_CONTEXT_REVISION",
     ]
     instructions: str | None = Field(default=None, max_length=4000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
     parent_suggestion_id: str | None = None
     force_regenerate: bool = False
-
-
-class PhotoAnalysisRequest(BaseModel):
-    evidence_ids: list[str] = Field(min_length=1, max_length=50)
 
 
 

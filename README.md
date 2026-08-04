@@ -6,15 +6,15 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.5
-**Status:** Cloud Inventory Configuration Intelligence adds governed configuration knowledge beneath concise high-level capabilities; staging validation required
+**Version:** 0.8.6
+**Status:** User administration, text-only evidence privacy controls, and per-device speech preferences added to the v0.8.5 configuration-intelligence baseline; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
 
 - Responsive mobile, tablet, and desktop single-page interface
 - Application-managed authentication using Argon2id password hashing
-- First-login password change, secure sessions, CSRF protection, and login lockout
+- First-login password change, secure sessions, CSRF protection, login lockout, administrator password reset, and controlled user deletion
 - Contributor, reviewer, owner, and administrator roles
 - Prospect-level isolation, report membership, comments, and optimistic concurrency
 - Multiple reports per prospect and owner-controlled report merge with lineage
@@ -28,9 +28,10 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - In-app evidence preview, multi-select move, and controlled evidence deletion
 - Context-preserving photograph upload and administration-tab navigation
 - Fast text-only AI current-operations wording with draft-first persistence, unchanged-source restoration, explicit regeneration, asynchronous verification, refinement lineage, and controlled acceptance
-- Independent cached photograph analysis followed by a separate photo-to-written-context revision workflow
-- Prioritized worker lanes isolate fast text, photo analysis, general AI, and publication processing
+- Photographs remain human-reviewed evidence and are never sent to AI for interpretation
+- Prioritized worker lanes isolate fast text, general AI, and publication processing
 - Direct section-level photograph upload with Quick Entry capture retained
+- Browser text-to-speech uses System / Browser Default unless the user selects another voice exposed by the current device
 - Source-aware Cloud Inventory Approach generation using approved capabilities, approved configuration intelligence, and approved historical knowledge
 - Governed Cloud Inventory configuration knowledge derived from controlled Guided Setup sources without adding discovery questions
 - General section notes and guided responses treated as Observations for Cloud Inventory functionality mapping without creating duplicate Findings

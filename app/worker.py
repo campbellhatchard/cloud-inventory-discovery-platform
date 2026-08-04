@@ -19,7 +19,6 @@ from .storage import storage_configuration_status
 
 LANES: dict[str, tuple[str, ...]] = {
     "fast-text": ("FAST_TEXT",),
-    "photo-analysis": ("PHOTO_ANALYSIS",),
     "general-ai": ("GENERAL_AI", "STANDARD"),
     "publication": ("PUBLICATION",),
 }

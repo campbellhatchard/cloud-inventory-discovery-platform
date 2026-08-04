@@ -336,18 +336,6 @@ class FileObject(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class EvidenceAiObservation(Base, TimestampMixin):
-    __tablename__ = "evidence_ai_observations"
-    __table_args__ = (UniqueConstraint("evidence_id"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
-    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id", ondelete="CASCADE"), index=True)
-    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
-    section_id: Mapped[str | None] = mapped_column(ForeignKey("report_sections.id", ondelete="CASCADE"), index=True)
-    model: Mapped[str] = mapped_column(String(100))
-    source_file_sha256: Mapped[str | None] = mapped_column(String(64))
-    content: Mapped[dict[str, Any]] = mapped_column(JSON)
-
-
 class Capability(Base, TimestampMixin):
     __tablename__ = "capabilities"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)

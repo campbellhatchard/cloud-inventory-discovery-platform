@@ -616,6 +616,8 @@ class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
     job_type: Mapped[str] = mapped_column(String(100), index=True)
+    queue_name: Mapped[str] = mapped_column(String(30), default="STANDARD", index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(20), default="QUEUED", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)

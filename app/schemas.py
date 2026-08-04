@@ -226,10 +226,16 @@ class AiRequest(BaseModel):
         "TARGETED_BENEFITS",
         "DEMO_PLAN",
         "REPORT_QUALITY_REVIEW",
+        "PHOTO_CONTEXT_REVISION",
     ]
     instructions: str | None = Field(default=None, max_length=4000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
     parent_suggestion_id: str | None = None
+
+
+class PhotoAnalysisRequest(BaseModel):
+    evidence_ids: list[str] = Field(min_length=1, max_length=50)
+
 
 
 class BrandingUpdate(BaseModel):

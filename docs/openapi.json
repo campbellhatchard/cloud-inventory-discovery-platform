@@ -46,7 +46,8 @@
               "SOLUTION_APPROACH",
               "TARGETED_BENEFITS",
               "DEMO_PLAN",
-              "REPORT_QUALITY_REVIEW"
+              "REPORT_QUALITY_REVIEW",
+              "PHOTO_CONTEXT_REVISION"
             ],
             "title": "Purpose",
             "type": "string"
@@ -1480,6 +1481,24 @@
         "title": "PasswordChangeRequest",
         "type": "object"
       },
+      "PhotoAnalysisRequest": {
+        "properties": {
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Evidence Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "evidence_ids"
+        ],
+        "title": "PhotoAnalysisRequest",
+        "type": "object"
+      },
       "ProspectArchiveRequest": {
         "properties": {
           "reason": {
@@ -2181,7 +2200,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.2"
+    "version": "0.8.3"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -5229,6 +5248,62 @@
           }
         },
         "summary": "Upsert Demo Section Priority"
+      }
+    },
+    "/api/reports/{report_id}/sections/{section_id}/photo-analysis": {
+      "post": {
+        "operationId": "request_photo_analysis_api_reports__report_id__sections__section_id__photo_analysis_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotoAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Photo Analysis"
       }
     },
     "/api/reports/{report_id}/sections/{section_id}/responses": {

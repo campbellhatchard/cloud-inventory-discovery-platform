@@ -211,20 +211,27 @@ def test_process_observation_job_uses_specialized_pipeline(admin_session, monkey
     report_id, payload = create_report(client, me, "AI Process")
     section = next(item for item in payload["sections"] if item["process_module"] == "PACKING")
 
-    def fake_observation(db, settings, snapshot, instructions, prior):
+    def fake_draft(settings, snapshot, instructions, prior):
         assert snapshot["section"]["id"] == section["id"]
         assert prior is None
         return {
             "original_text": "boxes weighed",
             "enhanced_text": "Packed orders are weighed before shipment.",
             "suggested_text": "Packed orders are weighed before shipment.",
-            "verification_status": "PASSED",
-            "accept_allowed": True,
+            "verification_status": "VERIFYING",
+            "accept_allowed": False,
             "source_refs": [{"ref": "section:narrative", "label": "Section narrative"}],
             "source_section_version": section["version"],
-        }, {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100}
+            "workflow_stage": "DRAFT_READY",
+        }, {"input_tokens": 60, "output_tokens": 15, "total_tokens": 75}
 
-    monkeypatch.setattr("app.ai_service.run_observation_enhancement", fake_observation)
+    def fake_finalize(settings, snapshot, draft):
+        result = dict(draft)
+        result.update({"verification_status": "PASSED", "accept_allowed": True, "workflow_stage": "COMPLETED"})
+        return result, {"input_tokens": 20, "output_tokens": 5, "total_tokens": 25}
+
+    monkeypatch.setattr("app.ai_service.generate_observation_draft", fake_draft)
+    monkeypatch.setattr("app.ai_service.finalize_observation_draft", fake_finalize)
     settings = get_settings().model_copy(update={
         "ai_enabled": True,
         "ai_confidential_content_enabled": True,
@@ -270,7 +277,10 @@ def test_frontend_ai_comparison_and_tts_contract():
     assert "speechSynthesis" in app_js
     assert 'data-action="refine-ai-enhancement"' in app_js
     assert 'data-action="accept-ai-enhancement"' in app_js
-    assert 'id="ai-photo-picker"' in app_js
+    assert 'id="photo-analysis"' in app_js
+    assert 'data-action="analyze-selected-photos"' in app_js
+    assert 'data-action="compare-photo-context"' in app_js
+    assert 'id="ai-photo-picker"' not in app_js
     assert ".ai-comparison-grid" in styles
 
 
@@ -317,7 +327,7 @@ def test_observation_request_rejects_evidence_from_another_section(admin_session
             headers=h,
         )
         assert requested.status_code == 400
-        assert "not available in this section" in requested.json()["detail"]
+        assert "Photographs are analyzed independently" in requested.json()["detail"]
     finally:
         settings.ai_enabled, settings.ai_confidential_content_enabled, settings.openai_data_control_mode, settings.openai_api_key = old
 

@@ -271,12 +271,38 @@ def calculate_admin_operations(db: Session, settings: Settings) -> dict[str, Any
     ai_jobs = list(db.scalars(select(AiJob).where(AiJob.completed_at.is_not(None)).order_by(AiJob.completed_at.desc()).limit(250)).all())
     durations = [max(0.0, (item.completed_at - item.created_at).total_seconds()) for item in ai_jobs if item.completed_at]
     tokens = Counter()
+    timing_samples: dict[str, dict[str, list[int]]] = {}
     for item in ai_jobs:
         usage = item.token_usage or {}
         for key in ("input_tokens", "output_tokens", "total_tokens", "calls"):
             value = usage.get(key)
             if isinstance(value, int):
                 tokens[key] += value
+        timing = usage.get("timing_ms") if isinstance(usage, dict) else None
+        if isinstance(timing, dict):
+            purpose = timing_samples.setdefault(item.purpose, {})
+            for key, value in timing.items():
+                if isinstance(value, int):
+                    purpose.setdefault(key, []).append(value)
+    timing_by_purpose = {
+        purpose: {
+            key: {
+                "count": len(values),
+                "average_ms": round(sum(values) / len(values), 1),
+                "max_ms": max(values),
+            }
+            for key, values in stages.items()
+            if values
+        }
+        for purpose, stages in timing_samples.items()
+    }
+    lane_rows = db.execute(
+        select(Job.queue_name, Job.status, func.count(Job.id))
+        .group_by(Job.queue_name, Job.status)
+    ).all()
+    queue_by_lane: dict[str, dict[str, int]] = {}
+    for queue_name, status, count in lane_rows:
+        queue_by_lane.setdefault(queue_name or "STANDARD", {})[status] = int(count)
     heartbeat = db.get(WorkerHeartbeat, "worker")
     last_publication = db.scalar(select(Publication).where(Publication.status == "COMPLETED").order_by(Publication.completed_at.desc()))
     recent_failures = list(db.scalars(select(AiJob).where(AiJob.status.in_(["FAILED", "BLOCKED"])).order_by(AiJob.created_at.desc()).limit(10)).all())
@@ -298,9 +324,10 @@ def calculate_admin_operations(db: Session, settings: Settings) -> dict[str, Any
             "job_counts": ai_counts,
             "average_processing_seconds": round(sum(durations) / len(durations), 2) if durations else None,
             "token_usage": dict(tokens),
+            "timing_by_purpose": timing_by_purpose,
             "recent_failures": [{"id": item.id, "purpose": item.purpose, "error": item.error, "created_at": _iso(item.created_at)} for item in recent_failures],
         },
-        "queue": {"job_counts": job_counts},
+        "queue": {"job_counts": job_counts, "by_lane": queue_by_lane},
         "worker": None if not heartbeat else {
             "status": heartbeat.status,
             "app_version": heartbeat.app_version,

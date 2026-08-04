@@ -140,14 +140,55 @@ Do not state guaranteed improvement percentages without an evidenced calculation
 
 ## 9. Use AI assistance
 
-AI is available only when enabled by administrators and privacy policy.
+AI is available only when enabled by administrators and privacy policy. AI output remains a draft until a user accepts or a reviewer approves it.
 
-1. Select a report/section.
-2. request the relevant assistance type;
-3. continue working while the queued job runs;
-4. review the pending suggestion;
-5. verify every customer fact and capability reference;
-6. approve, reject, or revise.
+### Fast AI Enhanced Wording
+
+Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. This workflow is deliberately text-only in v0.8.3. It uses the section narrative, guided responses, formal findings, and relevant metrics but does not wait for photograph analysis.
+
+1. Select **AI Enhance**.
+2. The first wording draft is displayed as soon as the generation call finishes.
+3. While the draft is visible, source verification continues in the background.
+4. Read and refine the proposed wording while verification runs.
+5. **Accept enhanced text** becomes available only after verification passes.
+6. If unsupported wording is detected, the system attempts one constrained repair and re-verifies the revision.
+
+Closing the AI window does not cancel the background job. The application no longer reports a browser-side timeout merely because a worker job takes longer than a fixed polling window.
+
+### Independent AI Photo Analysis
+
+Photographs are analyzed separately from written wording. The first visual-analysis stage does not receive Current Operations, guided responses, or the photo caption as process context. This reduces the risk that written assumptions influence what the model claims to see.
+
+1. Open the operational section and locate **AI Photo Analysis**.
+2. Select one or more photographs.
+3. Select **Analyze selected photos**.
+4. Each photograph is processed as an independent background job.
+5. Review the resulting **Visible observations**, **Cautious operational interpretations**, and **Uncertainties**.
+6. The first visual pass uses low-detail processing; the system may request one high-detail pass when small labels, screens, or dense visual detail could materially change the observation.
+7. Completed analysis is cached against the image SHA, so moving the same photograph to another section does not require the image to be analyzed again unless the underlying image changes.
+
+### Compare photos with Current Operations
+
+After at least one photograph has completed independent analysis, use **Compare to Current Operations**. This second stage uses the stored photo observations and the written discovery; it does not send the original image again.
+
+The comparison separates:
+
+- what the photograph supports in the written description;
+- additional visibly supported context;
+- potential conflicts; and
+- open questions that cannot safely be concluded.
+
+The system then proposes a revised Current Operations narrative. Review, refine, apply, or dismiss the suggestion. Applying it creates a new controlled Current Operations version with source type `AI_PHOTO_CONTEXT`; the previous wording remains in version history.
+
+### Other AI assistance
+
+For Cloud Inventory Approach, targeted benefits, Executive Summary, report-quality review, and demo planning:
+
+1. request the relevant assistance type;
+2. continue working while the queued job runs;
+3. review the pending suggestion;
+4. verify every customer fact and capability reference;
+5. approve, reject, or revise.
 
 Approved suggestions may add narrative, capability mappings, or benefits. AI output is not authoritative and is never included automatically.
 

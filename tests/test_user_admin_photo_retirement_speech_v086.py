@@ -5,8 +5,6 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import select
-
 from app.main import app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,9 +77,9 @@ def test_v086_version_migration_photo_retirement_and_speech_contract() -> None:
     ai_service = (ROOT / "app" / "ai_service.py").read_text(encoding="utf-8")
     worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.6"' in config
-    assert 'version = "0.8.6"' in pyproject
-    assert "ci-discovery-v0.8.6" in sw
+    assert 'app_version: str = "0.8.7"' in config
+    assert 'version = "0.8.7"' in pyproject
+    assert "ci-discovery-v0.8.7" in sw
     assert 'down_revision = "j50g3b9e7c10"' in migration
     assert 'op.drop_table("evidence_ai_observations")' in migration
     assert "PHOTO_ANALYSIS" not in worker
@@ -157,58 +155,16 @@ def test_admin_reset_revokes_sessions_and_restores_temporary_password(admin_sess
             assert target.locked_until is None
 
 
-def test_delete_user_soft_deletes_and_reassigns_owned_work(admin_session) -> None:
-    from app.database import SessionLocal
-    from app.models import Engagement, ProspectMembership, Report, ReportSection, User, UserRole
-
+def test_v086_user_administration_is_superseded_by_reversible_v087_lifecycle(admin_session) -> None:
     client, me = admin_session
-    target = create_user(client, me, "v086delete", ["OWNER"])
-    replacement = create_user(client, me, "v086replacement", ["OWNER"])
-    prospect_id, engagement_id, report_payload = create_report(client, me, "Delete Owner")
-    report_id = report_payload["report"]["id"]
-    section_id = report_payload["sections"][0]["id"]
-
-    with SessionLocal() as db:
-        db.get(Report, report_id).owner_id = target["id"]
-        db.get(Engagement, engagement_id).owner_id = target["id"]
-        db.get(ReportSection, section_id).assigned_to_user_id = target["id"]
-        if db.get(ProspectMembership, {"prospect_id": prospect_id, "user_id": target["id"]}) is None:
-            db.add(ProspectMembership(prospect_id=prospect_id, user_id=target["id"], role_scope="OWNER", created_by=me["id"]))
-        db.commit()
-
-    blocked = client.request(
-        "DELETE",
-        f"/api/admin/users/{target['id']}",
-        json={"replacement_user_id": None},
-        headers=headers(me),
-    )
-    assert blocked.status_code == 409
-
+    user = create_user(client, me, "v086legacyuser", ["CONTRIBUTOR"])
     deleted = client.request(
         "DELETE",
-        f"/api/admin/users/{target['id']}",
-        json={"replacement_user_id": replacement["id"]},
-        headers=headers(me),
-    )
-    assert deleted.status_code == 200, deleted.text
-    with SessionLocal() as db:
-        assert db.get(User, target["id"]).status == "DELETED"
-        assert db.get(Report, report_id).owner_id == replacement["id"]
-        assert db.get(Engagement, engagement_id).owner_id == replacement["id"]
-        assert db.get(ReportSection, section_id).assigned_to_user_id == replacement["id"]
-        membership = db.get(ProspectMembership, {"prospect_id": prospect_id, "user_id": replacement["id"]})
-        assert membership is not None and membership.role_scope == "OWNER"
-        assert db.scalar(select(UserRole).where(UserRole.user_id == target["id"])) is None
-
-    assert client.post("/api/auth/login", json={"username": target["username"], "password": "Test-Temporary1!"}).status_code == 401
-    self_delete = client.request(
-        "DELETE",
-        f"/api/admin/users/{me['id']}",
+        f"/api/admin/users/{user['id']}",
         json={"replacement_user_id": None},
         headers=headers(me),
     )
-    assert self_delete.status_code == 400
-
+    assert deleted.status_code in {404, 405}
 
 def test_photo_upload_remains_human_evidence_and_all_photo_ai_routes_are_gone(admin_session) -> None:
     client, me = admin_session

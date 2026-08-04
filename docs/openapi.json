@@ -1,7 +1,30 @@
 {
   "components": {
     "schemas": {
-      "AdminUserDeleteRequest": {
+      "AdminUserRolesUpdate": {
+        "properties": {
+          "roles": {
+            "items": {
+              "enum": [
+                "CONTRIBUTOR",
+                "REVIEWER",
+                "OWNER",
+                "ADMIN"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Roles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "roles"
+        ],
+        "title": "AdminUserRolesUpdate",
+        "type": "object"
+      },
+      "AdminUserStatusUpdate": {
         "properties": {
           "replacement_user_id": {
             "anyOf": [
@@ -13,9 +36,20 @@
               }
             ],
             "title": "Replacement User Id"
+          },
+          "status": {
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "title": "Status",
+            "type": "string"
           }
         },
-        "title": "AdminUserDeleteRequest",
+        "required": [
+          "status"
+        ],
+        "title": "AdminUserStatusUpdate",
         "type": "object"
       },
       "AiRequest": {
@@ -2173,8 +2207,15 @@
           },
           "roles": {
             "items": {
+              "enum": [
+                "CONTRIBUTOR",
+                "REVIEWER",
+                "OWNER",
+                "ADMIN"
+              ],
               "type": "string"
             },
+            "minItems": 1,
             "title": "Roles",
             "type": "array"
           },
@@ -2247,7 +2288,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.6"
+    "version": "0.8.7"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2877,6 +2918,20 @@
       }
     },
     "/api/admin/users": {
+      "get": {
+        "operationId": "list_admin_users_api_admin_users_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Admin Users"
+      },
       "post": {
         "operationId": "create_user_api_admin_users_post",
         "requestBody": {
@@ -2910,53 +2965,6 @@
           }
         },
         "summary": "Create User"
-      }
-    },
-    "/api/admin/users/{user_id}": {
-      "delete": {
-        "operationId": "admin_delete_user_api_admin_users__user_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "user_id",
-            "required": true,
-            "schema": {
-              "title": "User Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AdminUserDeleteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Admin Delete User"
       }
     },
     "/api/admin/users/{user_id}/reset-password": {
@@ -2994,6 +3002,100 @@
           }
         },
         "summary": "Admin Reset User Password"
+      }
+    },
+    "/api/admin/users/{user_id}/roles": {
+      "put": {
+        "operationId": "admin_update_user_roles_api_admin_users__user_id__roles_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserRolesUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Update User Roles"
+      }
+    },
+    "/api/admin/users/{user_id}/status": {
+      "patch": {
+        "operationId": "admin_update_user_status_api_admin_users__user_id__status_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserStatusUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Update User Status"
       }
     },
     "/api/ai-jobs/{ai_job_id}": {

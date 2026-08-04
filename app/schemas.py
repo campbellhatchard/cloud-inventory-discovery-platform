@@ -29,7 +29,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     display_name: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, min_length=10, max_length=500)
-    roles: list[str] = Field(default_factory=lambda: ["CONTRIBUTOR"])
+    roles: list[Literal["CONTRIBUTOR", "REVIEWER", "OWNER", "ADMIN"]] = Field(default_factory=lambda: ["CONTRIBUTOR"], min_length=1)
 
     @field_validator("password")
     @classmethod
@@ -42,7 +42,12 @@ class UserCreate(BaseModel):
         return value
 
 
-class AdminUserDeleteRequest(BaseModel):
+class AdminUserRolesUpdate(BaseModel):
+    roles: list[Literal["CONTRIBUTOR", "REVIEWER", "OWNER", "ADMIN"]] = Field(min_length=1)
+
+
+class AdminUserStatusUpdate(BaseModel):
+    status: Literal["ACTIVE", "INACTIVE"]
     replacement_user_id: str | None = None
 
 

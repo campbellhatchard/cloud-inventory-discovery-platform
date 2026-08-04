@@ -2118,3 +2118,33 @@ Browser speech defaults to System / Browser Default. Users may choose a device/b
 The v0.8.6 build must preserve all v0.8.5 Configuration Intelligence behavior, durable text-AI wording persistence, evidence capture and publication, while passing dedicated user administration, photograph-AI retirement, and speech-preference acceptance tests.
 
 The detailed contract is maintained in `docs/USER_ADMIN_EVIDENCE_PRIVACY_SPEECH_SPEC_v0.8.6.md`.
+
+
+# 33. Controlled Enhancement Delta — User Lifecycle & Role Administration v0.8.7
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.8.7` |
+| Locked baseline | v0.8.6 at `4aaa7369de80e69e9f297c1dbc9be1705eacbfe6` |
+| Development branch | `feature/user-lifecycle-role-admin-v0.8.7` |
+| Migration | `l72i5d1g9e32` revises `k61h4c0f8d21` |
+
+## 33.1 User lifecycle
+
+The v0.8.6 Delete User action is retired. Administrators shall manage user availability through explicit `ACTIVE` and `INACTIVE` states. Deactivation revokes active sessions and prevents authentication while preserving the identity record, global roles, prospect/report memberships, authorship, approvals, and audit attribution. Reactivation restores authentication eligibility without recreating the user.
+
+If an active user owns reports or engagements, deactivation requires an active Owner or Administrator replacement and transfers ownership before access is disabled. A user may not deactivate their own account and the last active Administrator may not be deactivated. Collaboration and assignment selectors expose ACTIVE users only.
+
+## 33.2 Role administration
+
+Administrators may edit a user's global role combination across Contributor, Reviewer, Owner, and Administrator. At least one role is required. An Administrator cannot remove the Administrator role from their own account, the final active Administrator must retain that role, and Owner cannot be removed while the user still owns reports or engagements.
+
+## 33.3 Legacy conversion
+
+Migration `l72i5d1g9e32` converts any v0.8.6 user row with status `DELETED` to `INACTIVE`. Data already removed by an earlier v0.8.6 delete action cannot be reconstructed automatically; the administrator may assign roles and reactivate the preserved user identity as appropriate.
+
+## 33.4 Verification
+
+The v0.8.7 build must preserve all v0.8.6 password-reset, text-AI, evidence privacy, speech-preference, configuration-intelligence, publication, and collaboration behavior while adding reversible user lifecycle and administrator role management.
+
+The detailed contract is maintained in `docs/USER_LIFECYCLE_ROLE_ADMIN_SPEC_v0.8.7.md`.

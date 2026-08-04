@@ -111,7 +111,8 @@ from .schemas import (
     KnowledgeEntryReview,
     MergeRequest,
     MetricCreate,
-    AdminUserDeleteRequest,
+    AdminUserRolesUpdate,
+    AdminUserStatusUpdate,
     PasswordChangeRequest,
     ProspectArchiveRequest,
     ProspectCreate,
@@ -606,9 +607,16 @@ def logout(response: FastAPIResponse, session=Depends(get_current_session), user
 
 @router.get("/users")
 def list_users(user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
-    # Any authenticated user can see names for collaboration; sensitive security fields are excluded.
-    users = list(db.scalars(select(User).where(User.status != "DELETED").order_by(User.display_name, User.username)).all())
+    # Collaboration selectors expose active identities only. Inactive accounts remain
+    # visible to administrators through /admin/users but cannot be assigned new work.
+    users = list(db.scalars(select(User).where(User.status == "ACTIVE").order_by(User.display_name, User.username)).all())
     return [{"id": u.id, "username": u.username, "display_name": u.display_name, "email": u.email, "status": u.status, "roles": sorted(user_roles(db, u.id))} for u in users]
+
+
+@router.get("/admin/users")
+def list_admin_users(actor: User = Depends(require_roles("ADMIN")), db: Session = Depends(get_db)):
+    users = list(db.scalars(select(User).order_by(User.display_name, User.username)).all())
+    return [{"id": u.id, "username": u.username, "display_name": u.display_name, "email": u.email, "status": u.status, "roles": sorted(user_roles(db, u.id)), "force_password_change": u.force_password_change, "last_login_at": _iso(u.last_login_at)} for u in users]
 
 
 @router.post("/admin/users", dependencies=[Depends(require_csrf)])
@@ -638,6 +646,7 @@ def create_user(
         email=str(payload.email),
         display_name=payload.display_name,
         password_hash=hash_password(temporary_password),
+        status="ACTIVE",
         force_password_change=True,
     )
     db.add(new_user)
@@ -649,6 +658,42 @@ def create_user(
     return _user_payload(db, new_user)
 
 
+@router.put("/admin/users/{user_id}/roles", dependencies=[Depends(require_csrf)])
+def admin_update_user_roles(
+    user_id: str,
+    payload: AdminUserRolesUpdate,
+    actor: User = Depends(require_roles("ADMIN")),
+    db: Session = Depends(get_db),
+):
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "User not found.")
+    new_roles = {role.upper() for role in payload.roles}
+    old_roles = user_roles(db, target.id)
+    if target.id == actor.id and "ADMIN" not in new_roles:
+        raise HTTPException(400, "You cannot remove the Administrator role from your own account.")
+    if "ADMIN" in old_roles and "ADMIN" not in new_roles and target.status == "ACTIVE":
+        active_admin_count = db.scalar(
+            select(func.count())
+            .select_from(UserRole)
+            .join(User, User.id == UserRole.user_id)
+            .where(UserRole.role == "ADMIN", User.status == "ACTIVE")
+        ) or 0
+        if active_admin_count <= 1:
+            raise HTTPException(409, "The last active administrator must retain the Administrator role.")
+    if "OWNER" in old_roles and "OWNER" not in new_roles:
+        owns_reports = bool(db.scalar(select(Report.id).where(Report.owner_id == target.id).limit(1)))
+        owns_engagements = bool(db.scalar(select(Engagement.id).where(Engagement.owner_id == target.id).limit(1)))
+        if owns_reports or owns_engagements:
+            raise HTTPException(409, "This user still owns reports or engagements. Reassign owned work before removing the Owner role.")
+    db.execute(delete(UserRole).where(UserRole.user_id == target.id))
+    for role in sorted(new_roles):
+        db.add(UserRole(user_id=target.id, role=role))
+    audit(db, actor=actor, action="USER_ROLES_UPDATED", target_type="USER", target_id=target.id, metadata={"old_roles": sorted(old_roles), "new_roles": sorted(new_roles)})
+    db.commit()
+    return {"ok": True, "roles": sorted(new_roles)}
+
+
 @router.post("/admin/users/{user_id}/reset-password", dependencies=[Depends(require_csrf)])
 def admin_reset_user_password(
     user_id: str,
@@ -657,7 +702,7 @@ def admin_reset_user_password(
     settings: Settings = Depends(get_settings),
 ):
     target = db.get(User, user_id)
-    if not target or target.status == "DELETED":
+    if not target:
         raise HTTPException(404, "User not found.")
     if target.id == actor.id:
         raise HTTPException(400, "Use Change password for your own account.")
@@ -679,24 +724,38 @@ def admin_reset_user_password(
     target.failed_login_count = 0
     target.locked_until = None
     db.execute(delete(UserSession).where(UserSession.user_id == target.id))
-    audit(db, actor=actor, action="USER_PASSWORD_RESET", target_type="USER", target_id=target.id, metadata={"sessions_revoked": True, "force_password_change": True})
+    audit(db, actor=actor, action="USER_PASSWORD_RESET", target_type="USER", target_id=target.id, metadata={"sessions_revoked": True, "force_password_change": True, "status": target.status})
     db.commit()
-    return {"ok": True, "force_password_change": True}
+    return {"ok": True, "force_password_change": True, "status": target.status}
 
 
-@router.delete("/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
-def admin_delete_user(
+@router.patch("/admin/users/{user_id}/status", dependencies=[Depends(require_csrf)])
+def admin_update_user_status(
     user_id: str,
-    payload: AdminUserDeleteRequest,
+    payload: AdminUserStatusUpdate,
     actor: User = Depends(require_roles("ADMIN")),
     db: Session = Depends(get_db),
 ):
     target = db.get(User, user_id)
-    if not target or target.status == "DELETED":
+    if not target:
         raise HTTPException(404, "User not found.")
-    if target.id == actor.id:
-        raise HTTPException(400, "You cannot delete your own administrator account.")
+    requested_status = payload.status.upper()
+    if target.status == requested_status:
+        return {"ok": True, "status": target.status, "replacement_user_id": None}
 
+    if requested_status == "ACTIVE":
+        roles = user_roles(db, target.id)
+        if not roles:
+            raise HTTPException(409, "Assign at least one role before activating this user.")
+        target.status = "ACTIVE"
+        target.failed_login_count = 0
+        target.locked_until = None
+        audit(db, actor=actor, action="USER_ACTIVATED", target_type="USER", target_id=target.id, metadata={"roles": sorted(roles)})
+        db.commit()
+        return {"ok": True, "status": "ACTIVE", "replacement_user_id": None}
+
+    if target.id == actor.id:
+        raise HTTPException(400, "You cannot deactivate your own administrator account.")
     target_roles = user_roles(db, target.id)
     if "ADMIN" in target_roles:
         active_admin_count = db.scalar(
@@ -706,14 +765,14 @@ def admin_delete_user(
             .where(UserRole.role == "ADMIN", User.status == "ACTIVE")
         ) or 0
         if active_admin_count <= 1:
-            raise HTTPException(409, "The last active administrator cannot be deleted.")
+            raise HTTPException(409, "The last active administrator cannot be deactivated.")
 
     owned_reports = list(db.scalars(select(Report).where(Report.owner_id == target.id)).all())
     owned_engagements = list(db.scalars(select(Engagement).where(Engagement.owner_id == target.id)).all())
     replacement = None
     if owned_reports or owned_engagements:
         if not payload.replacement_user_id:
-            raise HTTPException(409, "This user owns reports or engagements. Select an active replacement owner before deleting the user.")
+            raise HTTPException(409, "This user owns reports or engagements. Select an active replacement owner before deactivating the user.")
         replacement = db.get(User, payload.replacement_user_id)
         if not replacement or replacement.status != "ACTIVE" or replacement.id == target.id:
             raise HTTPException(400, "Replacement owner must be another active user.")
@@ -723,14 +782,7 @@ def admin_delete_user(
         for prospect_id in affected_prospect_ids:
             membership = db.get(ProspectMembership, {"prospect_id": prospect_id, "user_id": replacement.id})
             if membership is None:
-                db.add(
-                    ProspectMembership(
-                        prospect_id=prospect_id,
-                        user_id=replacement.id,
-                        role_scope="OWNER",
-                        created_by=actor.id,
-                    )
-                )
+                db.add(ProspectMembership(prospect_id=prospect_id, user_id=replacement.id, role_scope="OWNER", created_by=actor.id))
             elif membership.role_scope != "OWNER":
                 membership.role_scope = "OWNER"
         db.execute(update(Report).where(Report.owner_id == target.id).values(owner_id=replacement.id))
@@ -742,30 +794,22 @@ def admin_delete_user(
         db.execute(update(ReportSection).where(ReportSection.assigned_to_user_id == target.id).values(assigned_to_user_id=None))
 
     db.execute(delete(UserSession).where(UserSession.user_id == target.id))
-    db.execute(delete(ProspectMembership).where(ProspectMembership.user_id == target.id))
-    db.execute(delete(ReportMember).where(ReportMember.user_id == target.id))
-    db.execute(delete(EngagementMember).where(EngagementMember.user_id == target.id))
-    db.execute(delete(UserRole).where(UserRole.user_id == target.id))
-    target.status = "DELETED"
+    target.status = "INACTIVE"
     target.failed_login_count = 0
     target.locked_until = None
-    target.force_password_change = False
     audit(
-        db,
-        actor=actor,
-        action="USER_DELETED",
-        target_type="USER",
-        target_id=target.id,
+        db, actor=actor, action="USER_DEACTIVATED", target_type="USER", target_id=target.id,
         metadata={
-            "soft_delete": True,
             "sessions_revoked": True,
+            "roles_preserved": sorted(target_roles),
+            "memberships_preserved": True,
             "replacement_user_id": replacement.id if replacement else None,
             "reassigned_reports": len(owned_reports),
             "reassigned_engagements": len(owned_engagements),
         },
     )
     db.commit()
-    return {"ok": True, "status": "DELETED", "replacement_user_id": replacement.id if replacement else None}
+    return {"ok": True, "status": "INACTIVE", "replacement_user_id": replacement.id if replacement else None}
 
 
 @router.get("/prospects")

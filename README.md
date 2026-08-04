@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.3
-**Status:** Fast text-only AI wording, independent photo intelligence, and prioritized AI processing; staging validation required
+**Version:** 0.8.4
+**Status:** Durable AI wording reuse and refinement lineage added to the v0.8.3 fast-AI/photo-intelligence baseline; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -27,7 +27,7 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Configurable landscape and portrait report-photo dimensions in inches or centimetres
 - In-app evidence preview, multi-select move, and controlled evidence deletion
 - Context-preserving photograph upload and administration-tab navigation
-- Fast text-only AI current-operations wording with draft-first display, asynchronous verification, refinement, and controlled acceptance
+- Fast text-only AI current-operations wording with draft-first persistence, unchanged-source restoration, explicit regeneration, asynchronous verification, refinement lineage, and controlled acceptance
 - Independent cached photograph analysis followed by a separate photo-to-written-context revision workflow
 - Prioritized worker lanes isolate fast text, photo analysis, general AI, and publication processing
 - Direct section-level photograph upload with Quick Entry capture retained

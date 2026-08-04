@@ -11,6 +11,11 @@
             "title": "Evidence Ids",
             "type": "array"
           },
+          "force_regenerate": {
+            "default": false,
+            "title": "Force Regenerate",
+            "type": "boolean"
+          },
           "instructions": {
             "anyOf": [
               {
@@ -2200,7 +2205,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.3"
+    "version": "0.8.4"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -5080,6 +5085,52 @@
           }
         },
         "summary": "Update Section"
+      }
+    },
+    "/api/reports/{report_id}/sections/{section_id}/ai-wording/current": {
+      "get": {
+        "operationId": "get_current_ai_wording_api_reports__report_id__sections__section_id__ai_wording_current_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Current Ai Wording"
       }
     },
     "/api/reports/{report_id}/sections/{section_id}/content": {

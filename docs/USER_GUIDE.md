@@ -144,16 +144,19 @@ AI is available only when enabled by administrators and privacy policy. AI outpu
 
 ### Fast AI Enhanced Wording
 
-Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. This workflow is deliberately text-only in v0.8.3. It uses the section narrative, guided responses, formal findings, and relevant metrics but does not wait for photograph analysis.
+Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. The workflow is text-only and uses the section narrative, guided responses, formal findings, and relevant metrics. Photograph analysis remains separate.
 
 1. Select **AI Enhance**.
-2. The first wording draft is displayed as soon as the generation call finishes.
-3. While the draft is visible, source verification continues in the background.
-4. Read and refine the proposed wording while verification runs.
-5. **Accept enhanced text** becomes available only after verification passes.
-6. If unsupported wording is detected, the system attempts one constrained repair and re-verifies the revision.
+2. The application first checks the database for an active unaccepted suggestion created from the same written sources.
+3. When the source fingerprint matches, the saved wording is restored immediately and no new model request is created. This behavior is independent of elapsed time, browser, or device.
+4. When no matching suggestion exists, a new draft is generated and committed before verification completes. You may close the window and return later.
+5. While the draft is visible, source verification continues in the background.
+6. **Accept enhanced text** becomes available only after verification passes.
+7. Use **Refine** to revise the immediately preceding AI wording. The application sends the prior wording, the exact refinement request, and the current written sources. The original suggestion remains in history.
+8. Use **Generate another version** only when you intentionally want an alternative draft from unchanged sources.
+9. When the written sources have changed, the prior suggestion is shown as stale and cannot be refined or accepted. Select **Generate updated wording**.
 
-Closing the AI window does not cancel the background job. The application no longer reports a browser-side timeout merely because a worker job takes longer than a fixed polling window.
+Closing the AI window does not cancel the background job. Pending wording and processing status are database-backed and can be restored later.
 
 ### Independent AI Photo Analysis
 

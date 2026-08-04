@@ -542,46 +542,68 @@ function renderAiEnhancementResult(job, section) {
   const gaps = result.gaps || [];
   const unsupported = result.unsupported_claims || [];
   const statusLabel = verifying ? 'VERIFYING SOURCES' : (result.verification_status || job.status || 'REVIEW REQUIRED');
+  const restoredNotice = job.restored ? `<div class="validation-item INFO"><strong>Saved AI wording restored.</strong><p>The written source content has not changed, so no new AI request was created.${job.suggestion?.created_at ? ` Created ${esc(fmtDateTime(job.suggestion.created_at))}.` : ''}</p></div>` : '';
   target.innerHTML = `
+    ${restoredNotice}
     <div class="ai-result-head"><span class="badge ${passed ? 'badge-success' : (verifying ? 'badge-cyan' : 'badge-danger')}">${esc(statusLabel)}</span><button class="btn btn-ghost btn-small" type="button" data-action="speak-ai-text" ${enhancedText ? '' : 'disabled'}>🔊 Read aloud</button></div>
-    ${verifying ? '<div class="ai-verification-progress"><div class="spinner spinner-small" aria-hidden="true"></div><p>The wording draft is ready. Source verification is continuing in the background; you can review the text now.</p></div>' : ''}
+    ${verifying ? '<div class="ai-verification-progress"><div class="spinner spinner-small" aria-hidden="true"></div><p>The wording draft is saved. Source verification is continuing in the background; you can close this window and return later.</p></div>' : ''}
     <textarea id="ai-enhanced-text" class="ai-comparison-text" readonly>${esc(enhancedText)}</textarea>
     ${sources.length ? `<div class="ai-trace"><strong>Written sources used</strong><ul>${sources.map(item => `<li>${esc(aiSourceRefLabel(item, section))}</li>`).join('')}</ul></div>` : ''}
     ${gaps.length ? `<div class="ai-trace"><strong>Information gaps retained</strong><ul>${gaps.map(item => `<li>${esc(typeof item === 'string' ? item : JSON.stringify(item))}</li>`).join('')}</ul></div>` : ''}
     ${unsupported.length ? `<div class="validation-item ERROR"><strong>Unsupported claims detected.</strong><ul>${unsupported.map(item => `<li>${esc(item.text || JSON.stringify(item))}${item.reason ? ` — ${esc(item.reason)}` : ''}</li>`).join('')}</ul><p>Acceptance remains disabled until a supported revision completes.</p></div>` : ''}
     <div class="field ai-refinement-field"><label for="ai-refinement-instruction">Refine the AI wording</label><textarea id="ai-refinement-instruction" placeholder="For example: Make this more concise, use a neutral customer-facing tone, or emphasize the manual handoffs without adding new facts."></textarea></div>
-    <div class="card-actions"><button class="btn btn-secondary" type="button" data-action="refine-ai-enhancement" data-suggestion-id="${esc(job.suggestion.id)}" ${job.status === 'COMPLETED' ? '' : 'disabled'}>Refine</button><button class="btn btn-primary" type="button" data-action="accept-ai-enhancement" data-suggestion-id="${esc(job.suggestion.id)}" ${passed ? '' : 'disabled'}>Accept enhanced text</button></div>`;
+    <div class="card-actions"><button class="btn btn-secondary" type="button" data-action="refine-ai-enhancement" data-suggestion-id="${esc(job.suggestion.id)}" ${job.status === 'COMPLETED' ? '' : 'disabled'}>Refine</button><button class="btn btn-secondary" type="button" data-action="generate-new-ai-enhancement" ${job.status === 'COMPLETED' ? '' : 'disabled'}>Generate another version</button><button class="btn btn-primary" type="button" data-action="accept-ai-enhancement" data-suggestion-id="${esc(job.suggestion.id)}" ${passed ? '' : 'disabled'}>Accept enhanced text</button></div>`;
   target.dataset.enhancedText = enhancedText;
 }
 
-async function pollAiEnhancement(jobId, section, token) {
+function renderStaleAiEnhancement(job, section) {
+  const target = document.getElementById('ai-enhanced-output');
+  if (!target) return;
+  const result = job?.suggestion?.content || {};
+  const enhancedText = result.enhanced_text || result.suggested_text || '';
+  target.innerHTML = `
+    <div class="validation-item WARNING"><strong>The written source content has changed.</strong><p>This saved wording is retained for history, but it cannot be refined or accepted against the updated notes. Generate updated wording to use the current evidence.</p></div>
+    <div class="ai-result-head"><span class="badge badge-warning">STALE</span>${job.suggestion?.created_at ? `<span class="help">Created ${esc(fmtDateTime(job.suggestion.created_at))}</span>` : ''}</div>
+    <textarea class="ai-comparison-text" readonly>${esc(enhancedText)}</textarea>
+    <div class="card-actions"><button class="btn btn-primary" type="button" data-action="generate-updated-ai-enhancement">Generate updated wording</button></div>`;
+}
+
+async function pollAiEnhancement(jobId, section, token, restored=false) {
   const output = document.getElementById('ai-enhanced-output');
   while (token === state.aiEnhancementPollToken && document.getElementById('ai-enhancement-modal')) {
     let job;
     try {
       job = await api(`/api/ai-jobs/${jobId}`, {}, false);
+      job.restored = restored;
     } catch (error) {
-      if (output) output.innerHTML = `<div class="validation-item ERROR"><strong>Unable to refresh AI job status.</strong><p>${esc(error.message)}</p><p>The background job may still be running. Close and reopen AI Enhance to retry.</p></div>`;
+      if (output) output.innerHTML = `<div class="validation-item ERROR"><strong>Unable to refresh AI job status.</strong><p>${esc(error.message)}</p><p>The background job may still be running. Close and reopen AI Wording to restore it.</p></div>`;
       return;
     }
     if (job.suggestion) renderAiEnhancementResult(job, section);
     if (job.status === 'COMPLETED' && job.suggestion) return;
     if (['FAILED','BLOCKED'].includes(job.status)) {
-      if (output) output.innerHTML = `<div class="validation-item ERROR"><strong>AI enhancement failed.</strong><p>${esc(job.error || job.policy_decision?.reason || 'The AI job could not be completed.')}</p></div>`;
+      if (job.suggestion) {
+        renderAiEnhancementResult(job, section);
+        const target = document.getElementById('ai-enhanced-output');
+        target?.insertAdjacentHTML('afterbegin', `<div class="validation-item ERROR"><strong>AI verification did not complete.</strong><p>${esc(job.error || job.policy_decision?.reason || 'The AI job could not be completed.')}</p><p>The saved draft remains available. Generate another version when appropriate.</p></div>`);
+      } else if (output) {
+        output.innerHTML = `<div class="validation-item ERROR"><strong>AI enhancement failed.</strong><p>${esc(job.error || job.policy_decision?.reason || 'The AI job could not be completed.')}</p></div>`;
+      }
       return;
     }
     if (!job.suggestion && output) {
       const stage = job.status === 'RUNNING' ? 'Preparing the wording draft…' : 'Waiting for the fast-text AI worker…';
-      output.innerHTML = `<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>${esc(stage)}</p><p class="help">This text-only workflow no longer waits for photograph analysis.</p></div>`;
+      output.innerHTML = `<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>${esc(stage)}</p><p class="help">The request is stored in the database. You may close this window and return later.</p></div>`;
     }
     await new Promise(resolve => setTimeout(resolve, 1200));
   }
 }
 
-async function requestAiEnhancement(section, parentSuggestionId = null) {
+async function requestAiEnhancement(section, parentSuggestionId = null, {forceRegenerate=false} = {}) {
   const instruction = document.getElementById('ai-refinement-instruction')?.value?.trim() || null;
+  if (parentSuggestionId && !instruction) throw new Error('Enter a refinement request before refining the AI wording.');
   const output = document.getElementById('ai-enhanced-output');
-  if (output) output.innerHTML = '<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Preparing a fast text-only wording draft…</p></div>';
+  if (output) output.innerHTML = '<div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Preparing a fast text-only wording draft…</p><p class="help">The result will be saved before verification completes.</p></div>';
   const result = await api(`/api/reports/${state.report.report.id}/ai`, {
     method:'POST',
     body:{
@@ -590,10 +612,34 @@ async function requestAiEnhancement(section, parentSuggestionId = null) {
       instructions:instruction,
       evidence_ids:[],
       parent_suggestion_id:parentSuggestionId,
+      force_regenerate:forceRegenerate,
     },
   }, false);
   const token = ++state.aiEnhancementPollToken;
-  await pollAiEnhancement(result.ai_job_id, section, token);
+  await pollAiEnhancement(result.ai_job_id, section, token, Boolean(result.restored || result.reused));
+}
+
+async function loadCurrentAiEnhancement(section) {
+  const result = await api(`/api/reports/${state.report.report.id}/sections/${section.id}/ai-wording/current`, {}, false);
+  if (!result.available) {
+    await requestAiEnhancement(section);
+    return;
+  }
+  if (result.is_stale) {
+    renderStaleAiEnhancement(result, section);
+    return;
+  }
+  result.restored = true;
+  if (result.suggestion) renderAiEnhancementResult(result, section);
+  if (result.suggestion && ['FAILED','BLOCKED'].includes(result.status)) {
+    const target = document.getElementById('ai-enhanced-output');
+    target?.insertAdjacentHTML('afterbegin', `<div class="validation-item ERROR"><strong>AI verification did not complete.</strong><p>${esc(result.error || result.policy_decision?.reason || 'The AI job could not be completed.')}</p><p>The saved draft remains available. Generate another version when appropriate.</p></div>`);
+    return;
+  }
+  if (!result.suggestion || !['COMPLETED','FAILED','BLOCKED'].includes(result.status)) {
+    const token = ++state.aiEnhancementPollToken;
+    await pollAiEnhancement(result.ai_job_id || result.id, section, token, true);
+  }
 }
 
 async function showAiEnhancement(section) {
@@ -604,14 +650,14 @@ async function showAiEnhancement(section) {
   wrap.id = 'modal-root';
   wrap.className = 'modal-backdrop';
   wrap.innerHTML = `<section id="ai-enhancement-modal" class="modal ai-enhancement-modal" role="dialog" aria-modal="true" aria-label="AI enhance ${esc(section.title)}">
-    <div class="section-head"><div><div class="card-meta"><span class="badge badge-cyan">FAST AI WORDING</span><span>${esc(section.title)}</span></div><h2>Compare and refine current-operations wording</h2><p class="help">This workflow uses written discovery only. Photograph analysis is intentionally separated into AI Photo Analysis so visual processing cannot delay the wording draft.</p></div><button class="btn btn-ghost btn-small" data-action="close-modal">Close</button></div>
+    <div class="section-head"><div><div class="card-meta"><span class="badge badge-cyan">FAST AI WORDING</span><span>${esc(section.title)}</span></div><h2>Compare and refine current-operations wording</h2><p class="help">Saved, unaccepted wording is restored whenever the written discovery has not changed. Photograph analysis remains separate so visual processing cannot delay the wording draft.</p></div><button class="btn btn-ghost btn-small" data-action="close-modal">Close</button></div>
     <div class="ai-comparison-grid">
       <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>Original entered content</h3><span class="badge">Retained</span></div><textarea class="ai-comparison-text" readonly>${esc(sectionOriginalInputSummary(section))}</textarea></section>
-      <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>AI-enhanced wording</h3><span class="help">Draft appears before verification finishes</span></div><div id="ai-enhanced-output"><div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Preparing enhancement…</p></div></div></section>
+      <section class="ai-comparison-panel"><div class="ai-panel-title"><h3>AI-enhanced wording</h3><span class="help">Durable pending suggestion</span></div><div id="ai-enhanced-output"><div class="ai-working"><div class="spinner" aria-hidden="true"></div><p>Checking for saved AI wording…</p></div></div></section>
     </div>
   </section>`;
   document.body.appendChild(wrap);
-  await requestAiEnhancement(section);
+  await loadCurrentAiEnhancement(section);
 }
 
 function photoAnalysisList(title, values) {
@@ -1802,6 +1848,7 @@ async function handleClick(event) {
     if(action==='solution-version-history'){await showSolutionContentHistory(section);return;}
     if(action==='speak-ai-text'){speakAiText();return;}
     if(action==='refine-ai-enhancement'){await requestAiEnhancement(section,target.dataset.suggestionId);return;}
+    if(action==='generate-new-ai-enhancement'||action==='generate-updated-ai-enhancement'){await requestAiEnhancement(section,null,{forceRegenerate:true});return;}
     if(action==='accept-ai-enhancement'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted from fast AI wording enhancement comparison.'}},false);toast('AI-enhanced current-operations wording accepted. Original input has been retained in version history.','success');closeModal();await renderReport(reportId,section.id);return;}
     if(action==='refine-photo-context'){await requestPhotoContextRevision(section,target.dataset.suggestionId);return;}
     if(action==='accept-photo-context'){await api(`/api/reports/${reportId}/ai-suggestions/${target.dataset.suggestionId}/review`,{method:'POST',body:{decision:'APPROVED',note:'Accepted after comparing independent photo observations with Current Operations.'}},false);toast('Photo-supported Current Operations revision applied. The prior wording remains in version history.','success');closeModal();state.reportFocusAnchor='photo-analysis';await renderReport(reportId,section.id);return;}

@@ -2,42 +2,42 @@
 
 ## Current feature build
 
-- Version: **0.4.0**
-- Build date: **31 July 2026**
+- Version: **0.8.4**
+- Build date: **4 August 2026**
 - Status: **Implemented and automated validation passed; awaiting Render staging deployment and user acceptance**
-- Feature branch: `feature/prospect-onboarding-v0.4.0`
-- Source baseline: Render staging v0.3.0
-- Baseline commit: `e1f339c8fbd7b8c13aff8d7f9db065c4099d504b`
-- Enhancement specification: [`PROSPECT_ONBOARDING_SPEC_v0.4.0.md`](PROSPECT_ONBOARDING_SPEC_v0.4.0.md)
+- Feature branch: `feature/durable-ai-wording-v0.8.4`
+- Source baseline: application version v0.8.3
+- Migration head: `i49f2a8d6b99`
+- Enhancement specification: [`AI_WORDING_PERSISTENCE_SPEC_v0.8.4.md`](AI_WORDING_PERSISTENCE_SPEC_v0.8.4.md)
 
-## v0.4.0 implemented scope
+## v0.8.4 implemented scope
 
 | Area | Status |
 | --- | --- |
-| Guided Prospect, Site, and Engagement creation | Implemented |
-| Site and Engagement skip controls | Implemented |
-| Atomic onboarding API transaction | Implemented |
-| Automatic Engagement-to-Site link | Implemented |
-| Context-sensitive post-create navigation | Implemented |
-| Browser-defaulted IANA timezone dropdown | Implemented |
-| UK, Australian, North American, and complete modern-browser timezone coverage | Implemented |
-| Negative logo on dark application header | Implemented |
-| Full-colour logo on login and generated outputs | Implemented |
-| Favicon, manifest, and service-worker branding update | Implemented |
-| Application and cache version v0.4.0 | Implemented |
+| Pending AI wording stored before verification completes | Implemented |
+| Stable written-source SHA-256 fingerprint | Implemented |
+| Restore unchanged unaccepted wording across sessions/devices | Implemented |
+| API-level duplicate request prevention | Implemented |
+| Explicit Generate another version override | Implemented |
+| Stale-source detection and acceptance/refinement blocking | Implemented |
+| Immediate-parent refinement payload | Implemented |
+| Parent/child lineage, base text, instruction, and supersession metadata | Implemented |
+| Fresh and v0.8.3 upgrade migrations | Passed |
 
 ## Quality gates completed
 
-- Automated test suite: **23 passed**
+- Automated test suite: **92 passed**
+- Dedicated v0.8.4 tests: **5 passed**
 - Python bytecode compilation: pass
 - JavaScript syntax validation: pass
 - OpenAPI generation: pass
-- Existing Quick Entry and workflow regression: pass
+- Fresh migration to `i49f2a8d6b99`: pass
+- Upgrade migration from `h38e1f7c5a88`: pass
 
 ## Remaining gates
 
-1. Deploy the feature branch to Render staging.
-2. Confirm the correct logo on the dark header and light login card.
-3. Test browser-timezone defaulting in US, UK, and Australian browser configurations.
-4. Test all three post-create routing outcomes.
-5. Complete user acceptance and promote to the next locked baseline.
+1. Apply the package to a clean v0.8.3 repository.
+2. Run the Windows `Deploy.ps1 -Action Validate` gate, including Ruff and mypy from the pinned local toolchain.
+3. Deploy Web first so Alembic upgrades the schema.
+4. Deploy Worker after the Web migration succeeds.
+5. Complete the staging smoke test and user acceptance.

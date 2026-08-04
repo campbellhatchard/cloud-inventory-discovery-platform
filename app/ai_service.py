@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import time
@@ -155,6 +156,42 @@ def build_context(db: Session, report: Report, section: ReportSection | None, pu
     }
 
 
+def observation_source_fingerprint(snapshot: dict[str, Any]) -> str:
+    """Return a stable hash of the exact written evidence supplied to AI.
+
+    Volatile processing metadata and the section version counter are excluded.
+    Changes to section context or any source reference, label, type, or text
+    produce a different fingerprint.
+    """
+    section = dict(snapshot.get("section") or {})
+    normalized_sources = []
+    for item in snapshot.get("sources") or []:
+        if item.get("type") == "PHOTO":
+            continue
+        normalized_sources.append(
+            {
+                "ref": str(item.get("ref") or ""),
+                "type": str(item.get("type") or ""),
+                "label": str(item.get("label") or ""),
+                "text": str(item.get("text") or ""),
+            }
+        )
+    normalized_sources.sort(key=lambda item: (item["ref"], item["type"], item["label"], item["text"]))
+    canonical = {
+        "purpose": "OBSERVATION_ENHANCEMENT",
+        "report_id": str((snapshot.get("report") or {}).get("id") or ""),
+        "section": {
+            "id": str(section.get("id") or ""),
+            "title": str(section.get("title") or ""),
+            "process_module": str(section.get("process_module") or ""),
+            "original_narrative": str(section.get("original_narrative") or ""),
+        },
+        "sources": normalized_sources,
+    }
+    encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def build_observation_snapshot(
     db: Session,
     report: Report,
@@ -265,7 +302,7 @@ def build_observation_snapshot(
             }
         )
 
-    return {
+    snapshot = {
         "purpose": "OBSERVATION_ENHANCEMENT",
         "report": {"id": report.id, "title": report.title, "revision": report.revision},
         "section": {
@@ -278,6 +315,8 @@ def build_observation_snapshot(
         "selected_evidence_ids": selected_ids,
         "sources": sources,
     }
+    snapshot["source_fingerprint"] = observation_source_fingerprint(snapshot)
+    return snapshot
 
 
 def _client(settings: Settings):
@@ -535,7 +574,7 @@ def generate_observation_draft(
     instructions: str | None,
     prior_suggestion: AiSuggestion | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Generate the user-visible text draft in one lean text-only model call."""
+    """Generate a durable initial draft or a lineage-preserving refinement."""
     prior_text = ""
     if prior_suggestion:
         prior_text = str(
@@ -543,21 +582,36 @@ def generate_observation_draft(
             or (prior_suggestion.content or {}).get("suggested_text")
             or ""
         ).strip()
+        if not prior_text:
+            raise ValueError("The parent AI suggestion does not contain wording that can be refined.")
+        if not (instructions or "").strip():
+            raise ValueError("A refinement request is required when refining existing AI wording.")
+
     source_material = [
         item for item in snapshot.get("sources") or []
         if item.get("type") != "PHOTO"
     ]
-    system = (
-        "Rewrite the supplied CURRENT-operations discovery notes into concise professional customer-facing wording. "
-        "Use only supplied facts. Preserve uncertainty. Do not add recommendations, benefits, root causes, frequencies, performance claims, or numbers that are not explicitly supplied. "
-        "Do not analyze photographs. Return only JSON with enhanced_text, change_summary, gaps, source_refs, claims. "
-        "Keep enhanced_text focused and normally no longer than the source material."
-    )
+    if prior_suggestion:
+        system = (
+            "Revise the supplied base AI wording according to the user's refinement request. "
+            "Treat base_ai_wording as the text being edited and preserve wording that does not need to change. "
+            "Do not redraft from scratch unless the refinement request requires it. "
+            "Use the supplied source material only as the factual authority. Preserve uncertainty and do not add recommendations, benefits, root causes, frequencies, performance claims, or numbers that are not explicitly supplied. "
+            "Do not analyze photographs. Return only JSON with enhanced_text, change_summary, gaps, source_refs, claims. "
+            "Keep enhanced_text focused and normally no longer than the source material."
+        )
+    else:
+        system = (
+            "Rewrite the supplied CURRENT-operations discovery notes into concise professional customer-facing wording. "
+            "Use only supplied facts. Preserve uncertainty. Do not add recommendations, benefits, root causes, frequencies, performance claims, or numbers that are not explicitly supplied. "
+            "Do not analyze photographs. Return only JSON with enhanced_text, change_summary, gaps, source_refs, claims. "
+            "Keep enhanced_text focused and normally no longer than the source material."
+        )
     request_payload = {
         "section": snapshot.get("section"),
         "source_material": source_material,
-        "user_refinement_instruction": instructions or None,
-        "prior_enhanced_text": prior_text or None,
+        "base_ai_wording": prior_text or None,
+        "refinement_request": (instructions or "").strip() or None,
     }
     generated, usage = _call_json(
         settings,
@@ -578,11 +632,15 @@ def generate_observation_draft(
             for item in source_material
             if item.get("ref")
         ]
+    fingerprint = str(snapshot.get("source_fingerprint") or observation_source_fingerprint(snapshot))
+    snapshot = {**snapshot, "selected_evidence_ids": [], "source_fingerprint": fingerprint}
     content = {
         "original_text": str(snapshot.get("section", {}).get("original_narrative") or ""),
-        "source_snapshot": {**snapshot, "selected_evidence_ids": []},
+        "source_snapshot": snapshot,
+        "source_fingerprint": fingerprint,
         "enhanced_text": enhanced_text,
         "suggested_text": enhanced_text,
+        "base_ai_text": prior_text or None,
         "change_summary": generated.get("change_summary") or [],
         "gaps": generated.get("gaps") or [],
         "claims": generated.get("claims") or [],
@@ -591,7 +649,7 @@ def generate_observation_draft(
         "verification_status": "VERIFYING",
         "unsupported_claims": [],
         "accept_allowed": False,
-        "refinement_instruction": instructions,
+        "refinement_instruction": (instructions or "").strip() or None,
         "parent_suggestion_id": prior_suggestion.id if prior_suggestion else None,
         "source_section_version": snapshot.get("section", {}).get("version"),
         "workflow_stage": "DRAFT_READY",
@@ -2103,6 +2161,40 @@ def run_executive_summary(settings: Settings, snapshot: dict[str, Any], instruct
     }, _merge_usage(usage_items)
 
 
+def _supersede_prior_observation_suggestions(
+    db: Session,
+    suggestion: AiSuggestion,
+    source_fingerprint: str,
+) -> None:
+    """Leave one active pending wording candidate per section.
+
+    Same-source alternatives and refinements are SUPERSEDED. Older pending
+    wording based on different written evidence is marked STALE. History and
+    lineage remain intact.
+    """
+    prior_rows = list(
+        db.scalars(
+            select(AiSuggestion).where(
+                AiSuggestion.report_id == suggestion.report_id,
+                AiSuggestion.section_id == suggestion.section_id,
+                AiSuggestion.purpose == "OBSERVATION_ENHANCEMENT",
+                AiSuggestion.review_state == "PENDING",
+                AiSuggestion.id != suggestion.id,
+            )
+        ).all()
+    )
+    for prior in prior_rows:
+        prior_fingerprint = str(
+            prior.source_fingerprint
+            or (prior.content or {}).get("source_fingerprint")
+            or observation_source_fingerprint(dict((prior.content or {}).get("source_snapshot") or {}))
+        )
+        prior.source_fingerprint = prior_fingerprint or None
+        prior.review_state = "SUPERSEDED" if prior_fingerprint == source_fingerprint else "STALE"
+        prior.superseded_by_suggestion_id = suggestion.id
+
+
+
 def process_ai_job(db: Session, ai_job_id: str, settings: Settings) -> AiSuggestion:
     job = db.get(AiJob, ai_job_id)
     if not job:
@@ -2157,12 +2249,25 @@ def process_ai_job(db: Session, ai_job_id: str, settings: Settings) -> AiSuggest
                     source_refs=draft_content.get("source_refs", []),
                     confidence="MEDIUM",
                     review_state="PENDING",
+                    source_fingerprint=str(draft_content.get("source_fingerprint") or job.source_fingerprint or "") or None,
+                    parent_suggestion_id=parent.id if parent else None,
+                    base_ai_text=str(draft_content.get("base_ai_text") or "") or None,
+                    refinement_instruction=str(draft_content.get("refinement_instruction") or "") or None,
                 )
                 db.add(suggestion)
                 db.flush()
+                _supersede_prior_observation_suggestions(
+                    db,
+                    suggestion,
+                    str(draft_content.get("source_fingerprint") or job.source_fingerprint or ""),
+                )
             else:
                 suggestion.content = draft_content
                 suggestion.source_refs = draft_content.get("source_refs", [])
+                suggestion.source_fingerprint = str(draft_content.get("source_fingerprint") or job.source_fingerprint or "") or None
+                suggestion.parent_suggestion_id = parent.id if parent else None
+                suggestion.base_ai_text = str(draft_content.get("base_ai_text") or "") or None
+                suggestion.refinement_instruction = str(draft_content.get("refinement_instruction") or "") or None
             job.status = "VERIFYING"
             job.token_usage = {
                 "stage": "DRAFT_READY",

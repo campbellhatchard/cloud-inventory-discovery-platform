@@ -24,6 +24,7 @@ from .ai_service import (
     build_demo_plan_snapshot,
     build_executive_summary_snapshot,
     build_observation_snapshot,
+    observation_source_fingerprint,
     build_photo_context_snapshot,
     build_report_quality_snapshot,
     build_solution_snapshot,
@@ -147,6 +148,107 @@ router = APIRouter(prefix="/api")
 
 def _iso(value):
     return value.isoformat() if value else None
+
+
+def _observation_suggestion_fingerprint(suggestion: AiSuggestion) -> str | None:
+    content = dict(suggestion.content or {})
+    fingerprint = str(suggestion.source_fingerprint or content.get("source_fingerprint") or "").strip()
+    if not fingerprint:
+        snapshot = dict(content.get("source_snapshot") or {})
+        if snapshot:
+            fingerprint = observation_source_fingerprint(snapshot)
+    if fingerprint and suggestion.source_fingerprint != fingerprint:
+        suggestion.source_fingerprint = fingerprint
+    return fingerprint or None
+
+
+def _serialize_ai_suggestion(suggestion: AiSuggestion | None) -> dict[str, Any] | None:
+    if not suggestion:
+        return None
+    return {
+        "id": suggestion.id,
+        "content": suggestion.content,
+        "source_refs": suggestion.source_refs,
+        "confidence": suggestion.confidence,
+        "review_state": suggestion.review_state,
+        "source_fingerprint": suggestion.source_fingerprint,
+        "parent_suggestion_id": suggestion.parent_suggestion_id,
+        "base_ai_text": suggestion.base_ai_text,
+        "refinement_instruction": suggestion.refinement_instruction,
+        "superseded_by_suggestion_id": suggestion.superseded_by_suggestion_id,
+        "created_at": _iso(suggestion.created_at),
+        "reviewed_at": _iso(suggestion.reviewed_at),
+    }
+
+
+def _serialize_ai_job(job: AiJob, suggestion: AiSuggestion | None = None, **extra: Any) -> dict[str, Any]:
+    payload = {
+        "id": job.id,
+        "ai_job_id": job.id,
+        "report_id": job.report_id,
+        "section_id": job.section_id,
+        "purpose": job.purpose,
+        "status": job.status,
+        "model": job.model,
+        "policy_decision": job.policy_decision,
+        "parent_suggestion_id": job.parent_suggestion_id,
+        "source_fingerprint": job.source_fingerprint,
+        "token_usage": job.token_usage,
+        "error": job.error,
+        "created_at": _iso(job.created_at),
+        "completed_at": _iso(job.completed_at),
+        "suggestion": _serialize_ai_suggestion(suggestion),
+    }
+    payload.update(extra)
+    return payload
+
+
+def _find_current_observation_suggestion(
+    db: Session,
+    report_id: str,
+    section_id: str,
+    source_fingerprint: str,
+) -> AiSuggestion | None:
+    candidates = list(
+        db.scalars(
+            select(AiSuggestion)
+            .where(
+                AiSuggestion.report_id == report_id,
+                AiSuggestion.section_id == section_id,
+                AiSuggestion.purpose == "OBSERVATION_ENHANCEMENT",
+                AiSuggestion.review_state == "PENDING",
+            )
+            .order_by(AiSuggestion.created_at.desc())
+        ).all()
+    )
+    for suggestion in candidates:
+        if _observation_suggestion_fingerprint(suggestion) == source_fingerprint:
+            return suggestion
+    return None
+
+
+def _find_latest_stale_observation_suggestion(
+    db: Session,
+    report_id: str,
+    section_id: str,
+    source_fingerprint: str,
+) -> AiSuggestion | None:
+    candidates = list(
+        db.scalars(
+            select(AiSuggestion)
+            .where(
+                AiSuggestion.report_id == report_id,
+                AiSuggestion.section_id == section_id,
+                AiSuggestion.purpose == "OBSERVATION_ENHANCEMENT",
+                AiSuggestion.review_state.in_(["PENDING", "STALE"]),
+            )
+            .order_by(AiSuggestion.created_at.desc())
+        ).all()
+    )
+    for suggestion in candidates:
+        if _observation_suggestion_fingerprint(suggestion) != source_fingerprint:
+            return suggestion
+    return None
 
 
 def _user_payload(db: Session, user: User, csrf_token: str | None = None) -> dict[str, Any]:
@@ -1109,7 +1211,14 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
             "source_type": demo_plan.source_type, "source_refs": demo_plan.source_refs,
             "created_at": _iso(demo_plan.created_at),
         },
-        "ai_suggestions": [{"id": s.id, "section_id": s.section_id, "purpose": s.purpose, "content": s.content, "source_refs": s.source_refs, "confidence": s.confidence, "review_state": s.review_state, "reviewed_at": _iso(s.reviewed_at), "created_at": _iso(s.created_at)} for s in suggestions],
+        "ai_suggestions": [{
+            "id": s.id, "section_id": s.section_id, "purpose": s.purpose, "content": s.content,
+            "source_refs": s.source_refs, "confidence": s.confidence, "review_state": s.review_state,
+            "source_fingerprint": s.source_fingerprint, "parent_suggestion_id": s.parent_suggestion_id,
+            "base_ai_text": s.base_ai_text, "refinement_instruction": s.refinement_instruction,
+            "superseded_by_suggestion_id": s.superseded_by_suggestion_id,
+            "reviewed_at": _iso(s.reviewed_at), "created_at": _iso(s.created_at),
+        } for s in suggestions],
         "publications": [
             {
                 "id": p.id,
@@ -2340,6 +2449,93 @@ def request_photo_analysis(
     }
 
 
+@router.get("/reports/{report_id}/sections/{section_id}/ai-wording/current")
+def get_current_ai_wording(
+    report_id: str,
+    section_id: str,
+    user: User = Depends(enforce_password_changed),
+    db: Session = Depends(get_db),
+):
+    report = _get_report(db, report_id)
+    require_report_access(db, user, report)
+    section = _get_section(db, section_id)
+    if section.report_id != report.id:
+        raise HTTPException(400, "Section does not belong to report.")
+
+    snapshot = build_observation_snapshot(db, report, section, [])
+    fingerprint = str(snapshot.get("source_fingerprint") or observation_source_fingerprint(snapshot))
+    suggestion = _find_current_observation_suggestion(db, report.id, section.id, fingerprint)
+    active_job = db.scalar(
+        select(AiJob)
+        .where(
+            AiJob.report_id == report.id,
+            AiJob.section_id == section.id,
+            AiJob.purpose == "OBSERVATION_ENHANCEMENT",
+            AiJob.source_fingerprint == fingerprint,
+            AiJob.status.in_(["QUEUED", "RUNNING", "VERIFYING"]),
+        )
+        .order_by(AiJob.created_at.desc())
+    )
+    if active_job:
+        active_suggestion = db.scalar(
+            select(AiSuggestion)
+            .where(AiSuggestion.ai_job_id == active_job.id)
+            .order_by(AiSuggestion.created_at.desc())
+        )
+        return _serialize_ai_job(
+            active_job,
+            active_suggestion,
+            available=True,
+            is_current=True,
+            is_stale=False,
+            restored=True,
+            current_source_fingerprint=fingerprint,
+            message="The existing AI wording request is still processing.",
+        )
+
+    if suggestion:
+        job = db.get(AiJob, suggestion.ai_job_id)
+        if not job:
+            raise HTTPException(409, "The saved AI wording no longer has a processing record.")
+        db.commit()
+        return _serialize_ai_job(
+            job,
+            suggestion,
+            available=True,
+            is_current=True,
+            is_stale=False,
+            restored=True,
+            current_source_fingerprint=fingerprint,
+            message="Saved AI wording restored because the written source content has not changed.",
+        )
+
+    stale = _find_latest_stale_observation_suggestion(db, report.id, section.id, fingerprint)
+    if stale:
+        stale_job = db.get(AiJob, stale.ai_job_id)
+        if not stale_job:
+            raise HTTPException(409, "The previous AI wording no longer has a processing record.")
+        db.commit()
+        return _serialize_ai_job(
+            stale_job,
+            stale,
+            available=True,
+            is_current=False,
+            is_stale=True,
+            restored=True,
+            current_source_fingerprint=fingerprint,
+            message="Previous AI wording exists, but the written source content has changed.",
+        )
+
+    return {
+        "available": False,
+        "is_current": False,
+        "is_stale": False,
+        "restored": False,
+        "current_source_fingerprint": fingerprint,
+        "message": "No saved AI wording exists for the current written source content.",
+    }
+
+
 @router.post("/reports/{report_id}/ai", dependencies=[Depends(require_csrf)], status_code=status.HTTP_202_ACCEPTED)
 def request_ai(
     report_id: str,
@@ -2356,21 +2552,71 @@ def request_ai(
 
     context_snapshot = None
     parent_suggestion = None
+    source_fingerprint = None
     if payload.purpose == "OBSERVATION_ENHANCEMENT":
         if not section:
             raise HTTPException(400, "Observation enhancement requires a report section.")
         if payload.evidence_ids:
             raise HTTPException(
                 400,
-                "Photographs are analyzed independently in AI Photo Analysis. AI Enhanced Wording is text-only in v0.8.3.",
+                "Photographs are analyzed independently in AI Photo Analysis. AI Enhanced Wording is text-only in v0.8.4.",
             )
+        context_snapshot = build_observation_snapshot(db, report, section, [])
+        source_fingerprint = str(
+            context_snapshot.get("source_fingerprint") or observation_source_fingerprint(context_snapshot)
+        )
+        context_snapshot["source_fingerprint"] = source_fingerprint
         if payload.parent_suggestion_id:
             parent_suggestion = db.get(AiSuggestion, payload.parent_suggestion_id)
             if not parent_suggestion or parent_suggestion.report_id != report.id or parent_suggestion.section_id != section.id:
                 raise HTTPException(400, "Parent AI suggestion does not belong to this section.")
             if parent_suggestion.purpose != "OBSERVATION_ENHANCEMENT":
                 raise HTTPException(400, "Only an observation enhancement can be refined through this workflow.")
-        context_snapshot = build_observation_snapshot(db, report, section, [])
+            if parent_suggestion.review_state != "PENDING":
+                raise HTTPException(409, "Only the active pending AI wording can be refined.")
+            if not (payload.instructions or "").strip():
+                raise HTTPException(400, "Enter a refinement request before refining the AI wording.")
+            parent_fingerprint = _observation_suggestion_fingerprint(parent_suggestion)
+            if parent_fingerprint != source_fingerprint:
+                raise HTTPException(
+                    409,
+                    "The written Current Operations sources changed after this wording was created. Generate updated wording before refining it.",
+                )
+        elif not payload.force_regenerate:
+            existing_suggestion = _find_current_observation_suggestion(
+                db, report.id, section.id, source_fingerprint
+            )
+            if existing_suggestion:
+                existing_job = db.get(AiJob, existing_suggestion.ai_job_id)
+                if existing_job:
+                    db.commit()
+                    return _serialize_ai_job(
+                        existing_job,
+                        existing_suggestion,
+                        reused=True,
+                        restored=True,
+                        message="Saved AI wording restored because the written source content has not changed.",
+                    )
+            existing_job = db.scalar(
+                select(AiJob)
+                .where(
+                    AiJob.report_id == report.id,
+                    AiJob.section_id == section.id,
+                    AiJob.purpose == "OBSERVATION_ENHANCEMENT",
+                    AiJob.parent_suggestion_id.is_(None),
+                    AiJob.source_fingerprint == source_fingerprint,
+                    AiJob.status.in_(["QUEUED", "RUNNING", "VERIFYING"]),
+                )
+                .order_by(AiJob.created_at.desc())
+            )
+            if existing_job:
+                return _serialize_ai_job(
+                    existing_job,
+                    None,
+                    reused=True,
+                    restored=True,
+                    message="The existing AI wording request is still processing.",
+                )
     elif payload.purpose == "PHOTO_CONTEXT_REVISION":
         if not section:
             raise HTTPException(400, "Photo-context revision requires a report section.")
@@ -2465,6 +2711,7 @@ def request_ai(
         policy_decision=decision.as_dict(),
         context_snapshot=context_snapshot,
         parent_suggestion_id=parent_suggestion.id if parent_suggestion else None,
+        source_fingerprint=source_fingerprint,
         status="BLOCKED" if not decision.allowed else "QUEUED",
         requested_by=user.id,
     )
@@ -2521,7 +2768,14 @@ def request_ai(
         "PHOTO_CONTEXT_REVISION": "Photo observations queued for comparison with the written Current Operations narrative.",
     }
     message = messages.get(payload.purpose, "AI enhancement queued for generation and human review.")
-    return {"ai_job_id": job.id, "status": job.status, "message": message}
+    return {
+        "ai_job_id": job.id,
+        "status": job.status,
+        "message": message,
+        "reused": False,
+        "restored": False,
+        "source_fingerprint": source_fingerprint,
+    }
 
 
 @router.get("/ai-jobs/{ai_job_id}")
@@ -2532,28 +2786,7 @@ def get_ai_job(ai_job_id: str, user: User = Depends(enforce_password_changed), d
     report = _get_report(db, job.report_id)
     require_report_access(db, user, report)
     suggestion = db.scalar(select(AiSuggestion).where(AiSuggestion.ai_job_id == job.id).order_by(AiSuggestion.created_at.desc()))
-    return {
-        "id": job.id,
-        "report_id": job.report_id,
-        "section_id": job.section_id,
-        "purpose": job.purpose,
-        "status": job.status,
-        "model": job.model,
-        "policy_decision": job.policy_decision,
-        "parent_suggestion_id": job.parent_suggestion_id,
-        "token_usage": job.token_usage,
-        "error": job.error,
-        "created_at": _iso(job.created_at),
-        "completed_at": _iso(job.completed_at),
-        "suggestion": None if not suggestion else {
-            "id": suggestion.id,
-            "content": suggestion.content,
-            "source_refs": suggestion.source_refs,
-            "confidence": suggestion.confidence,
-            "review_state": suggestion.review_state,
-            "created_at": _iso(suggestion.created_at),
-        },
-    }
+    return _serialize_ai_job(job, suggestion)
 
 
 @router.post("/reports/{report_id}/ai-suggestions/{suggestion_id}/review", dependencies=[Depends(require_csrf)])
@@ -2576,6 +2809,9 @@ def review_ai(
     else:
         require_report_access(db, user, report, "REVIEWER")
 
+    if suggestion.review_state in {"STALE", "SUPERSEDED"}:
+        raise HTTPException(409, "This AI wording is no longer the active candidate. Review the current saved wording instead.")
+
     suggestion.review_state = payload.decision
     suggestion.reviewed_by = user.id
     suggestion.review_note = payload.note
@@ -2592,7 +2828,20 @@ def review_ai(
             if content.get("verification_status") != "PASSED" or not content.get("accept_allowed", False):
                 raise HTTPException(409, "This AI-assisted current-operations revision contains unsupported claims and cannot be accepted. Refine or regenerate it first.")
             source_version = content.get("source_section_version")
-            if source_version is not None and int(source_version) != target_section.version:
+            if suggestion.purpose == "OBSERVATION_ENHANCEMENT":
+                stored_fingerprint = _observation_suggestion_fingerprint(suggestion)
+                current_snapshot = build_observation_snapshot(db, report, target_section, [])
+                current_fingerprint = str(
+                    current_snapshot.get("source_fingerprint") or observation_source_fingerprint(current_snapshot)
+                )
+                if stored_fingerprint and stored_fingerprint != current_fingerprint:
+                    raise HTTPException(
+                        409,
+                        "The written Current Operations sources changed after this wording was generated. Generate updated wording before accepting it.",
+                    )
+                if not stored_fingerprint and source_version is not None and int(source_version) != target_section.version:
+                    raise HTTPException(409, "The section changed after this revision was generated. Generate a new revision before accepting it.")
+            elif source_version is not None and int(source_version) != target_section.version:
                 raise HTTPException(409, "The section changed after this revision was generated. Generate a new revision before accepting it.")
             if not suggested_text:
                 raise HTTPException(409, "The current-operations revision does not contain usable text.")

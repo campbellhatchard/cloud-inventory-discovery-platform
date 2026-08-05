@@ -77,9 +77,9 @@ def test_v086_version_migration_photo_retirement_and_speech_contract() -> None:
     ai_service = (ROOT / "app" / "ai_service.py").read_text(encoding="utf-8")
     worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.7"' in config
-    assert 'version = "0.8.7"' in pyproject
-    assert "ci-discovery-v0.8.7" in sw
+    assert 'app_version: str = "0.8.8"' in config
+    assert 'version = "0.8.8"' in pyproject
+    assert "ci-discovery-v0.8.8" in sw
     assert 'down_revision = "j50g3b9e7c10"' in migration
     assert 'op.drop_table("evidence_ai_observations")' in migration
     assert "PHOTO_ANALYSIS" not in worker

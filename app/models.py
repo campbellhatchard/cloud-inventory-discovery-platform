@@ -27,6 +27,7 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
     username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    username_key: Mapped[str] = mapped_column(String(500), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(Text)
     display_name: Mapped[str | None] = mapped_column(String(200))

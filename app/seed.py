@@ -9,6 +9,7 @@ from sqlalchemy import select
 from .auth import hash_password
 from .config import get_settings
 from .database import Base, SessionLocal, engine
+from .usernames import clean_username, normalize_username
 from .models import (
     BrandingProfile,
     Capability,
@@ -94,7 +95,9 @@ def seed() -> None:
     settings = get_settings()
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
-        admin = db.scalar(select(User).where(User.username == settings.bootstrap_admin_username))
+        bootstrap_username = clean_username(settings.bootstrap_admin_username)
+        bootstrap_username_key = normalize_username(bootstrap_username)
+        admin = db.scalar(select(User).where(User.username_key == bootstrap_username_key))
         if not admin:
             password = settings.bootstrap_admin_password
             if not password:
@@ -102,7 +105,7 @@ def seed() -> None:
                     raise RuntimeError("BOOTSTRAP_ADMIN_PASSWORD is required in production.")
                 password = "ChangeMe-Development-Only!"
                 print("WARNING: development bootstrap admin password is ChangeMe-Development-Only!")
-            admin = User(username=settings.bootstrap_admin_username, email=settings.bootstrap_admin_email, display_name="Administrator", password_hash=hash_password(password), force_password_change=True)
+            admin = User(username=bootstrap_username, username_key=bootstrap_username_key, email=settings.bootstrap_admin_email, display_name="Administrator", password_hash=hash_password(password), force_password_change=True)
             db.add(admin)
             db.flush()
             db.add(UserRole(user_id=admin.id, role="ADMIN"))

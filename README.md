@@ -6,14 +6,15 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.7
-**Status:** User lifecycle and role administration added to the locked v0.8.6 baseline; staging validation required
+**Version:** 0.8.8
+**Status:** Case-insensitive username authentication added to the v0.8.7 user-lifecycle baseline; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
 
 - Responsive mobile, tablet, and desktop single-page interface
 - Application-managed authentication using Argon2id password hashing
+- Usernames preserve administrator-entered capitalization while authentication and uniqueness checks are case-insensitive
 - First-login password change, secure sessions, CSRF protection, login lockout, administrator password reset, editable global roles, and reversible Active/Inactive user status
 - Contributor, reviewer, owner, and administrator roles
 - Prospect-level isolation, report membership, comments, and optimistic concurrency

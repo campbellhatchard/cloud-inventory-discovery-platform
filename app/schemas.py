@@ -10,6 +10,14 @@ class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=500)
 
+    @field_validator("username")
+    @classmethod
+    def clean_username(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Username is required.")
+        return cleaned
+
 
 class PasswordChangeRequest(BaseModel):
     current_password: str
@@ -30,6 +38,14 @@ class UserCreate(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, min_length=10, max_length=500)
     roles: list[Literal["CONTRIBUTOR", "REVIEWER", "OWNER", "ADMIN"]] = Field(default_factory=lambda: ["CONTRIBUTOR"], min_length=1)
+
+    @field_validator("username")
+    @classmethod
+    def clean_username(cls, value: str) -> str:
+        cleaned = value.strip()
+        if len(cleaned) < 3:
+            raise ValueError("Username must contain at least three characters.")
+        return cleaned
 
     @field_validator("password")
     @classmethod

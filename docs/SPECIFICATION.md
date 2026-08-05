@@ -2148,3 +2148,31 @@ Migration `l72i5d1g9e32` converts any v0.8.6 user row with status `DELETED` to `
 The v0.8.7 build must preserve all v0.8.6 password-reset, text-AI, evidence privacy, speech-preference, configuration-intelligence, publication, and collaboration behavior while adding reversible user lifecycle and administrator role management.
 
 The detailed contract is maintained in `docs/USER_LIFECYCLE_ROLE_ADMIN_SPEC_v0.8.7.md`.
+
+
+# 34. Controlled Enhancement Delta — Case-Insensitive Username Authentication v0.8.8
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.8.8` |
+| Locked baseline | v0.8.7 at `290c51583c70e6c7005785f3f8968837b7766225` |
+| Development branch | `feature/case-insensitive-usernames-v0.8.8` |
+| Migration | `m83j6e2h0f43` revises `l72i5d1g9e32` |
+
+## 34.1 Username identity
+
+The application shall preserve the capitalization entered for a username while performing authentication and uniqueness checks against a required normalized username key. Normalization trims surrounding whitespace and applies Unicode case folding. Case-only username variants identify the same account namespace and cannot be created as separate identities.
+
+## 34.2 Authentication controls
+
+Username comparison is case-insensitive; password verification remains case-sensitive and Argon2id-based. Account status, lockout counters, forced password change, sessions, roles, memberships, ownership, and audit attribution continue to operate against the resolved user identity.
+
+## 34.3 Migration protection
+
+Migration `m83j6e2h0f43` backfills existing users without changing stored/displayed usernames and creates a unique index on the normalized key. It must stop before schema alteration if existing records collide under case-insensitive comparison.
+
+## 34.4 Verification
+
+The v0.8.8 build must preserve all v0.8.7 functionality and pass mixed-case login, display preservation, whitespace normalization, duplicate prevention, password case-sensitivity, migration backfill, and collision-preflight tests.
+
+The detailed contract is maintained in `docs/USERNAME_CASE_INSENSITIVE_AUTH_SPEC_v0.8.8.md`.

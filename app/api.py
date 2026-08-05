@@ -134,6 +134,7 @@ from .schemas import (
     ValidationRequest,
 )
 from .storage import ObjectStorage, StorageConfigurationError, build_storage_key, safe_filename, storage_configuration_status
+from .usernames import normalize_username
 from .readiness import (
     calculate_admin_operations,
     calculate_admin_review_queue,
@@ -626,7 +627,8 @@ def create_user(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    if db.scalar(select(User).where(or_(User.username == payload.username, User.email == str(payload.email)))):
+    username_key = normalize_username(payload.username)
+    if db.scalar(select(User).where(or_(User.username_key == username_key, User.email == str(payload.email)))):
         raise HTTPException(status_code=409, detail="Username or email already exists.")
     temporary_password = payload.password or settings.default_user_temp_password
     if not temporary_password:
@@ -643,6 +645,7 @@ def create_user(
         raise HTTPException(500, "The configured temporary password does not meet password complexity requirements.")
     new_user = User(
         username=payload.username,
+        username_key=username_key,
         email=str(payload.email),
         display_name=payload.display_name,
         password_hash=hash_password(temporary_password),

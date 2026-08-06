@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.8
-**Status:** Case-insensitive username authentication added to the v0.8.7 user-lifecycle baseline; staging validation required
+**Version:** 0.8.9
+**Status:** Unified Current Operations Narrative consolidates typed Quick Entry notes and manual narrative editing into one canonical section; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -35,14 +35,14 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Browser text-to-speech uses System / Browser Default unless the user selects another voice exposed by the current device
 - Source-aware Cloud Inventory Approach generation using approved capabilities, approved configuration intelligence, and approved historical knowledge
 - Governed Cloud Inventory configuration knowledge derived from controlled Guided Setup sources without adding discovery questions
-- General section notes and guided responses treated as Observations for Cloud Inventory functionality mapping without creating duplicate Findings
+- Current Operations Narrative is the single user-facing operational-note record; typed Quick Entry classifications are synchronized internally for AI, readiness, mapping, and benefits
 - Optional discovery questions and sections; only populated sections require review before final publication
 - Stable left-navigation position while moving between report sections
 - Standard and custom report sections
-- Guided questions plus free-form narrative capture
-- Quick Entry field-capture screen with persistent operational routing, browser autosave, and offline-safe IndexedDB queue
+- Guided questions plus one editable Current Operations Narrative per operational area
+- Quick Entry field-capture screen appends typed Observation/Pain Point/Risk/Gap/Strength/Opportunity notes directly into the destination Current Operations Narrative
 - Native-camera and attachment capture, image normalization, optional captions, automatic section placement, and text extraction
-- Findings, baseline metrics, approved capability mappings, qualitative and measurable benefits
+- Narrative-derived operational classifications, baseline metrics, approved capability mappings, qualitative and measurable benefits
 - Governed capability catalog and human-approved knowledge repository
 - Queued AI assistance with policy gating and mandatory human review
 - Draft/final validation and publication workflow

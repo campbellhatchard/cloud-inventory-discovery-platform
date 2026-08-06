@@ -2176,3 +2176,37 @@ Migration `m83j6e2h0f43` backfills existing users without changing stored/displa
 The v0.8.8 build must preserve all v0.8.7 functionality and pass mixed-case login, display preservation, whitespace normalization, duplicate prevention, password case-sensitivity, migration backfill, and collision-preflight tests.
 
 The detailed contract is maintained in `docs/USERNAME_CASE_INSENSITIVE_AUTH_SPEC_v0.8.8.md`.
+
+# 35. Controlled Enhancement Delta — Unified Current Operations Narrative v0.8.9
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.8.9` |
+| Locked baseline | v0.8.8 at `5e1a7da75d5c3b0b9128ded67ee4c86ce02deaac` |
+| Development branch | `feature/unified-current-operations-v0.8.9` |
+| Migration | `n94k7f3i1g54` revises `m83j6e2h0f43` |
+
+## 35.1 Canonical current-operations record
+
+Each operational report page shall expose one user-facing **Current Operations Narrative** as the canonical record for written current-state discovery. The separate Findings card and Add Finding editing workflow are retired. Contributors may freely add to, reorganize, or edit the complete narrative.
+
+Quick Entry notes shall append directly to the destination section narrative. The selected classification is preserved as an editable subheading using the controlled set Observation, Pain Point, Risk, Gap, Strength, and Opportunity. Human-entered narrative text appearing before any explicit classification is treated as an Observation.
+
+## 35.2 Internal classification synchronization
+
+Typed Finding rows remain an internal derived index only so readiness, AI grounding, capability mapping, benefits, and traceability can continue to consume structured classifications. They are not a second user-editing surface. Saving the narrative resynchronizes this index. Unchanged entries retain identity; changed or removed entries are marked `SUPERSEDED`. Approved or pending capability mappings tied to superseded wording become `STALE` and must not silently remain approved against changed source text.
+
+## 35.3 Existing data migration
+
+Migration `n94k7f3i1g54` appends existing non-rejected section Findings into the section Current Operations Narrative using their existing classification and impact, then marks those records `NARRATIVE_DERIVED`. Existing narrative text is retained. Rejected and sectionless historical findings are not promoted into operational narrative.
+
+## 35.4 AI and publication behavior
+
+Current Operations AI enhancement remains text-only and must preserve user-selected classification headings; it may improve wording but may not flatten, rename, remove, or invent classifications. Solution intelligence consumes synchronized classifications without duplicating the raw narrative. DOCX/PDF and in-app Report Preview publish the narrative once and do not emit a second Current-State Findings section.
+
+## 35.5 Verification
+
+The v0.8.9 build must preserve all v0.8.8 authentication, user lifecycle, evidence privacy, speech, configuration intelligence, solution intelligence, reporting, and collaboration behavior while passing Quick Entry append, classification parsing, narrative resynchronization, stale-mapping, migration, AI-heading preservation, and no-duplicate-display tests.
+
+The detailed contract is maintained in `docs/UNIFIED_CURRENT_OPERATIONS_SPEC_v0.8.9.md`.
+

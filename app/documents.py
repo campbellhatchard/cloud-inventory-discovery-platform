@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import Settings
+from .current_operations import parse_current_operations_narrative
 from .models import (
     Benefit,
     BrandingProfile,
@@ -32,7 +33,6 @@ from .models import (
     Engagement,
     EvidenceItem,
     FileObject,
-    Finding,
     PromptDefinition,
     Prospect,
     Report,
@@ -370,6 +370,20 @@ def _add_text(doc: Document, text: str) -> None:
         doc.add_paragraph(block)
 
 
+def _add_current_operations_text(doc: Document, text: str) -> None:
+    entries = parse_current_operations_narrative(text)
+    if not entries:
+        return
+    for entry in entries:
+        heading = doc.add_paragraph()
+        heading.add_run(f"{entry.label}:").bold = True
+        _add_text(doc, entry.statement)
+        if entry.impact:
+            impact = doc.add_paragraph()
+            impact.add_run("Impact: ").bold = True
+            impact.add_run(entry.impact)
+
+
 def _image_bytes_to_file(data: bytes, suffix: str = ".jpg") -> Path:
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
@@ -603,7 +617,6 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
             return True
         checks = [
             select(Response.id).where(Response.section_id == section.id).limit(1),
-            select(Finding.id).where(Finding.section_id == section.id, Finding.status != "REJECTED").limit(1),
             select(EvidenceItem.id).where(EvidenceItem.section_id == section.id, EvidenceItem.status.in_(["READY", "AVAILABLE"])).limit(1),
             select(Benefit.id).where(
                 Benefit.section_id == section.id,
@@ -658,7 +671,7 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
             continue
 
         if section.narrative.strip():
-            _add_text(doc, section.narrative)
+            _add_current_operations_text(doc, section.narrative)
         responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.section_id == section.id, PromptDefinition.active.is_(True)).order_by(PromptDefinition.display_order)).all()
         if responses:
             doc.add_heading("Discovery Responses", level=2)
@@ -666,16 +679,6 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
                 p = doc.add_paragraph()
                 p.add_run(prompt.question).bold = True
                 _add_text(doc, response.narrative or (str(response.payload) if response.payload else "No narrative response recorded."))
-
-        findings = list(db.scalars(select(Finding).where(Finding.section_id == section.id, Finding.status != "REJECTED").order_by(Finding.created_at)).all())
-        if findings:
-            doc.add_heading("Current-State Findings", level=2)
-            for finding in findings:
-                p = doc.add_paragraph(style="List Bullet")
-                p.add_run(f"{finding.finding_type.replace('_', ' ').title()}: ").bold = True
-                p.add_run(finding.statement)
-                if finding.impact:
-                    doc.add_paragraph(f"Impact: {finding.impact}")
 
         solution = db.scalar(
             select(SectionContentVersion)

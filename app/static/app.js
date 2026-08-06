@@ -437,7 +437,7 @@ function quickEntryContent() {
       <div class="field quick-entry-area"><label for="quick-entry-area">Area of operation</label><select id="quick-entry-area" data-action="quick-entry-area" required><option value="">Select area of operation</option>${areaOptions}</select></div>
     </section>
     <section class="card quick-entry-card">
-      <div class="section-head"><div><h2>Quick Field Capture</h2><p class="help">Capture a field observation now and refine it later in the destination report section.</p></div></div>
+      <div class="section-head"><div><h2>Quick Field Capture</h2><p class="help">Capture a typed field note now. It is added directly to the destination section's Current Operations Narrative under the selected subheading, where it can be edited with the rest of the narrative.</p></div></div>
       <form id="quick-entry-note-form">
         <div class="field"><label for="quick-entry-finding-type">Type</label><select id="quick-entry-finding-type" name="finding_type"><option>OBSERVATION</option><option>PAIN_POINT</option><option>RISK</option><option>GAP</option><option>STRENGTH</option><option>OPPORTUNITY</option></select></div>
         <div class="field"><label for="quick-entry-note">Note</label><textarea id="quick-entry-note" class="quick-entry-note" name="note" required placeholder="Capture the observation, issue, strength, risk, or opportunity."></textarea></div>
@@ -459,8 +459,6 @@ function sectionOriginalInputSummary(section) {
   if (section.narrative?.trim()) parts.push(`SECTION NARRATIVE\n${section.narrative.trim()}`);
   const answered = (section.responses || []).filter(item => (item.narrative || '').trim() || item.payload);
   if (answered.length) parts.push(`GUIDED DISCOVERY RESPONSES\n${answered.map(item => `${item.question}\n${item.narrative || JSON.stringify(item.payload || {})}`).join('\n\n')}`);
-  const findings = report.findings.filter(item => item.section_id === section.id && item.status !== 'REJECTED');
-  if (findings.length) parts.push(`FINDINGS\n${findings.map(item => `${item.finding_type.replaceAll('_',' ')}: ${item.statement}${item.impact ? `\nImpact noted: ${item.impact}` : ''}`).join('\n\n')}`);
   const metrics = report.metrics.filter(item => item.section_id === section.id);
   if (metrics.length) parts.push(`METRICS\n${metrics.map(item => `${item.name}: ${item.value_text ?? item.value_numeric ?? ''}${item.unit ? ` ${item.unit}` : ''}${item.period ? ` (${item.period})` : ''}`).join('\n')}`);
   return parts.join('\n\n') || 'No written observations have been entered yet. You can still use selected photographs as evidence.';
@@ -469,16 +467,17 @@ function sectionOriginalInputSummary(section) {
 
 function sectionObservationSources(section) {
   const sources = [];
-  if (section.narrative?.trim()) {
+  const narrativeFindings = state.report.findings.filter(item => item.section_id === section.id && !['REJECTED','SUPERSEDED'].includes(item.status));
+  for (const finding of narrativeFindings) {
+    sources.push({ref:`finding:${finding.id}`, type:finding.finding_type, label:`${finding.finding_type.replaceAll('_',' ')} — ${finding.statement}`, statement:finding.statement, general:finding.finding_type==='OBSERVATION', findingId:finding.id});
+  }
+  if (!narrativeFindings.length && section.narrative?.trim()) {
     sources.push({ref:'section:narrative', type:'OBSERVATION', label:'Observation — Current operations narrative', statement:section.narrative.trim(), general:true});
   }
   for (const response of section.responses || []) {
     const text = (response.narrative || '').trim() || (response.payload ? JSON.stringify(response.payload) : '');
     if (!text) continue;
     sources.push({ref:`response:${response.id}`, type:'OBSERVATION', label:`Observation — ${response.question}`, statement:text, general:true});
-  }
-  for (const finding of state.report.findings.filter(item => item.section_id === section.id && item.status !== 'REJECTED')) {
-    sources.push({ref:`finding:${finding.id}`, type:finding.finding_type, label:`${finding.finding_type.replaceAll('_',' ')} — ${finding.statement}`, statement:finding.statement, general:false, findingId:finding.id});
   }
   return sources;
 }
@@ -728,7 +727,7 @@ async function showSolutionApproach(section) {
   const approvedCapabilities = state.capabilities.filter(item => item.status === 'APPROVED');
   if (!approvedCapabilities.length) throw new Error('No approved Cloud Inventory capabilities are available. Review the capability catalog in Administration first.');
   const sources = sectionObservationSources(section);
-  if (!sources.length) throw new Error('Enter current operations notes, guided responses, or findings before generating a Cloud Inventory approach.');
+  if (!sources.length) throw new Error('Enter Current Operations Narrative content or guided responses before generating a Cloud Inventory approach.');
   const current = section.cloud_inventory_approach?.text || '';
   closeModal();
   const wrap = document.createElement('div');
@@ -798,7 +797,7 @@ async function requestTargetedBenefits(section, parentSuggestionId = null) {
 async function showTargetedBenefits(section) {
   if (!navigator.onLine) throw new Error('Targeted benefit generation requires an online connection.');
   if (!state.aiStatus?.policy?.allowed) throw new Error(state.aiStatus?.policy?.reason || 'AI enhancement is not configured for this environment.');
-  if (!sectionObservationSources(section).length) throw new Error('Enter current operations notes or findings before generating targeted benefits.');
+  if (!sectionObservationSources(section).length) throw new Error('Enter Current Operations Narrative content before generating targeted benefits.');
   const approvedMappings = state.report.capability_mappings.filter(item=>item.section_id===section.id && item.approval_state==='APPROVED');
   if (!section.cloud_inventory_approach?.text && !approvedMappings.length) throw new Error('Enter or accept a Cloud Inventory approach, or approve a capability mapping, before generating targeted benefits.');
   const existing = state.report.benefits.filter(item=>item.section_id===section.id && item.approval_state!=='REJECTED');
@@ -1063,9 +1062,7 @@ function reportSectionContent(section) {
   const module = section.process_module || 'GENERAL';
   const prompts = report.prompts_by_module[module] || report.prompts_by_module.GENERAL || [];
   const answered = new Map(section.responses.map(r => [r.prompt_id, r]));
-  const findings = report.findings.filter(f => f.section_id === section.id);
   const evidence = report.evidence.filter(e => e.section_id === section.id);
-  const generalObservations = sectionObservationSources(section).filter(item => item.general);
   const approach = section.cloud_inventory_approach;
   const approvedMappings = report.capability_mappings.filter(item => item.section_id === section.id && item.approval_state === 'APPROVED');
   const approvedCapabilityCount = state.capabilities.filter(item => item.status === 'APPROVED').length;
@@ -1077,14 +1074,13 @@ function reportSectionContent(section) {
     <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions(section.id)}</select></div>
     <section class="card">
       <div class="section-head"><div><div class="card-meta">${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="ai-enhance-observations" ${state.aiStatus?.policy?.allowed?'':'disabled'} title="${esc(state.aiStatus?.policy?.reason || 'AI status unavailable')}">AI Enhance</button><button class="btn btn-ghost btn-small" data-action="section-version-history">Version history</button>${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
-      <p class="help">This section is open for collaborative entry by anyone associated with the report. No assignment or section status is required.</p>
-      <div class="field"><label for="section-narrative">Current operations narrative</label><textarea id="section-narrative" class="editor" data-section-id="${section.id}" placeholder="Write or refine the customer-facing narrative. Autosaves after you stop typing.">${esc(section.narrative)}</textarea><div id="narrative-save" class="save-state"></div></div>
+      <p class="help">This is the single editable record of current operations for this area. Quick Entry notes are added here under their selected subheading (Observation, Pain Point, Risk, Gap, Strength, or Opportunity). You can freely add to, reorganize, or edit the complete narrative.</p>
+      <div class="field"><label for="section-narrative">Current Operations Narrative</label><textarea id="section-narrative" class="editor" data-section-id="${section.id}" placeholder="Capture or refine current operations. Quick Entry adds typed notes here automatically. Autosaves after you stop typing.">${esc(section.narrative)}</textarea><div id="narrative-save" class="save-state"></div></div>
     </section>
     <section class="card">
       <div class="section-head"><div><h2>Guided discovery questions</h2><p class="help">Structured answers preserve evidence and can later be converted into approved narrative.</p></div></div>
       <div class="prompt-list">${prompts.map(p => { const r=answered.get(p.id); return `<article class="prompt-card"><div class="prompt-question"><span>${esc(p.question)}</span></div>${p.answer_type==='PHOTO'?`<button class="btn btn-ghost btn-small" data-action="section-upload-photo">Add photo to this section</button>`:`<textarea class="prompt-answer" data-prompt-id="${p.id}" data-response-version="${r?.version || ''}" placeholder="Capture the answer, facts, assumptions, and examples.">${esc(r?.narrative || '')}</textarea><div class="save-state" data-save-for="${p.id}"></div>`}</article>`; }).join('')}</div>
     </section>
-    <section class="card" id="findings"><div class="section-head"><div><h2>Findings</h2><p class="help">Use a formal finding when you want to classify an Observation, Pain Point, Risk, Gap, Strength, or Opportunity. General current-operations notes and guided responses are automatically treated as <strong>Observations</strong> when assessing Cloud Inventory functionality; they do not need to be duplicated here.</p></div><button class="btn btn-ghost btn-small" data-action="new-finding">Add detailed finding</button></div>${findings.map(f => `<article class="finding"><div class="card-meta"><span class="badge">${esc(f.finding_type.replaceAll('_',' '))}</span><span>Confidence: ${esc(f.confidence)}</span></div><p>${esc(f.statement)}</p>${f.impact?`<p class="impact"><strong>Impact:</strong> ${esc(f.impact)}</p>`:''}</article>`).join('') || '<p class="help">No specifically classified findings have been captured for this section.</p>'}${generalObservations.length?`<div class="general-observation-summary"><strong>${generalObservations.length} general note${generalObservations.length===1?'':'s'} available as Observations for functionality mapping</strong><ul>${generalObservations.slice(0,6).map(item=>`<li>${esc(item.label.replace('Observation — ',''))}: ${esc(item.statement.slice(0,180))}${item.statement.length>180?'…':''}</li>`).join('')}</ul></div>`:''}</section>
     ${section.process_module ? `<section class="card" id="cloud-inventory-approach"><div class="section-head"><div><h2>Cloud Inventory Approach</h2><p class="help">Type the Cloud Inventory approach directly, map approved capabilities to operational observations, generate a source-grounded response with AI, or use any combination of these methods. AI generation uses approved product references and approved historical knowledge only.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="generate-solution-approach" ${solutionEnabled?'':'disabled'} title="${esc(solutionEnabled ? 'Generate or improve a source-grounded Cloud Inventory approach' : (state.aiStatus?.policy?.reason || (!approvedCapabilityCount ? 'No approved Cloud Inventory capabilities are available.' : 'Enter operational observations before generating an approach.')))}">${approach?.text ? 'Enhance with AI' : 'Generate with AI'}</button><button class="btn btn-ghost btn-small" data-action="solution-version-history">Version history</button><button class="btn btn-ghost btn-small" data-action="map-capability" ${sectionObservationSources(section).length?'':'disabled'}>Map approved capability</button></div></div><div class="field"><label for="cloud-inventory-approach-editor">Cloud Inventory approach narrative</label><textarea id="cloud-inventory-approach-editor" class="editor solution-approach-editor" data-section-id="${section.id}" data-content-version="${approach?.version || ''}" placeholder="Describe how Cloud Inventory will support this operational area. You can type directly, map approved capabilities, or use Generate with AI. Autosaves after you stop typing.">${esc(approach?.text || '')}</textarea><div id="solution-approach-save" class="save-state">${approach ? `${esc(approach.source_type.replaceAll('_',' '))} · Version ${esc(approach.version)} · ${esc(fmtDateTime(approach.created_at))}` : ''}</div></div>${approvedMappings.length?`<div class="solution-mapping-summary"><strong>Approved functionality mappings</strong>${approvedMappings.map(item=>`<div class="finding"><div class="card-meta"><span class="badge badge-success">${esc(item.capability_code)}</span><span>${esc(item.source_label || 'Operational observation')}</span></div><strong>${esc(item.capability_name)}</strong><p>${esc(item.rationale)}</p></div>`).join('')}</div>`:''}</section>` : ''}
     ${section.process_module ? `<section class="card" id="targeted-benefits"><div class="section-head"><div><h2>Targeted Benefits</h2><p class="help">Capture or generate concise benefits that connect the observed operation to the accepted Cloud Inventory approach. Numeric claims require a recorded metric, formula, and explicit assumptions.</p></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="generate-targeted-benefits" ${benefitsEnabled?'':'disabled'}>${sectionBenefits.length?'Enhance with AI':'Generate with AI'}</button><button class="btn btn-ghost btn-small" data-action="new-benefit">Add benefit</button></div></div>${sectionBenefits.length?`<div class="benefit-list">${sectionBenefits.map(item=>`<article class="finding"><div class="section-head"><div><strong>${esc(benefitCategoryLabel(item.category))}</strong><div class="card-meta"><span>${esc(item.measure_type)}</span><span>Confidence: ${esc(item.confidence)}</span></div></div><span class="badge ${item.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(item.approval_state)}</span></div><p>${esc(item.statement)}</p>${item.source_label?`<p class="help"><strong>Based on:</strong> ${esc(item.source_label)}</p>`:''}${canReview(report.access_scope)&&item.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-benefit" data-id="${item.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-benefit" data-id="${item.id}" data-decision="REJECTED">Reject</button></div>`:''}</article>`).join('')}</div>`:'<p class="help">No targeted benefits have been captured for this operational area.</p>'}</section>
     <section class="card" id="demo-priority"><div class="section-head"><div><h2>Demo Priority</h2><p class="help">These inputs are internal to the presales team and are used to build the customer-specific demo flow.</p></div></div><form id="section-demo-priority-form"><input type="hidden" name="section_id" value="${section.id}"><input type="hidden" name="expected_version" value="${demoPriority?.version||''}"><div class="field-row"><div class="field"><label>Importance</label><select name="priority"><option value="MUST_SHOW" ${demoPriority?.priority==='MUST_SHOW'?'selected':''}>Must show</option><option value="SHOULD_SHOW" ${demoPriority?.priority==='SHOULD_SHOW'?'selected':''}>Should show</option><option value="OPTIONAL" ${!demoPriority||demoPriority.priority==='OPTIONAL'?'selected':''}>Optional</option><option value="DO_NOT_SHOW" ${demoPriority?.priority==='DO_NOT_SHOW'?'selected':''}>Do not show</option></select></div><div class="field"><label>Estimated minutes</label><input name="estimated_minutes" type="number" min="1" max="240" value="${esc(demoPriority?.estimated_minutes||'')}"></div></div><div class="field"><label>What the presales consultant should show</label><textarea name="user_notes" placeholder="For example: Demonstrate how urgent picking work can be prioritized without relying on verbal instructions.">${esc(demoPriority?.user_notes||'')}</textarea></div><div class="field"><label>Constraints or claims to avoid</label><textarea name="constraints" placeholder="For example: Do not demonstrate ERP order creation; the ERP remains the system of record.">${esc(demoPriority?.constraints||'')}</textarea></div><button class="btn btn-ghost btn-small" type="submit">Save demo priority</button></form></section>` : ''}
@@ -1102,7 +1098,7 @@ function reportInspector(section) {
   const canR = canReview(report.access_scope);
   return `
     <aside class="report-inspector">
-      <section class="inspector-card"><h3>Cloud Inventory functionality</h3>${observationSources.length?`<button class="btn btn-ghost btn-small btn-wide" data-action="map-capability">Map approved capability</button><p class="help">Formal findings and general notes are both available as mapping sources. Unclassified general notes are treated as Observations.</p>`:'<p class="help">Capture a current-operations note, guided response, or finding before mapping functionality.</p>'}${mappings.map(m=>`<div class="finding"><div class="card-meta"><span>${esc(m.source_label || 'Operational source')}</span><span class="badge ${m.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(m.approval_state)}</span></div><strong>${esc(m.capability_name)}</strong><p>${esc(m.rationale)}</p>${m.source_statement?`<p class="help"><strong>Mapped from:</strong> ${esc(m.source_statement)}</p>`:''}${canR&&m.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
+      <section class="inspector-card"><h3>Cloud Inventory functionality</h3>${observationSources.length?`<button class="btn btn-ghost btn-small btn-wide" data-action="map-capability">Map approved capability</button><p class="help">Typed Current Operations Narrative entries and guided responses are available as mapping sources. Unclassified narrative text is treated as an Observation.</p>`:'<p class="help">Capture Current Operations Narrative content or a guided response before mapping functionality.</p>'}${mappings.map(m=>`<div class="finding"><div class="card-meta"><span>${esc(m.source_label || 'Operational source')}</span><span class="badge ${m.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(m.approval_state)}</span></div><strong>${esc(m.capability_name)}</strong><p>${esc(m.rationale)}</p>${m.source_statement?`<p class="help"><strong>Mapped from:</strong> ${esc(m.source_statement)}</p>`:''}${canR&&m.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-mapping" data-id="${m.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
       <section class="inspector-card"><h3>Benefits and baselines</h3><button class="btn btn-ghost btn-small btn-wide" data-action="new-benefit">Add benefit statement</button>${benefits.map(b=>`<div class="finding"><p>${esc(b.statement)}</p><div class="card-meta"><span>${esc(b.measure_type)}</span><span class="badge ${b.approval_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(b.approval_state)}</span></div>${canR&&b.approval_state==='PENDING'?`<div class="card-actions"><button class="btn btn-primary btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="APPROVED">Approve</button><button class="btn btn-danger btn-small" data-action="review-benefit" data-id="${b.id}" data-decision="REJECTED">Reject</button></div>`:''}</div>`).join('')}</section>
       <section class="inspector-card"><h3>AI assistance</h3><p class="help">${esc(state.aiStatus?.policy?.reason || 'AI status unavailable.')}</p>${suggestions.filter(s=>['OBSERVATION_ENHANCEMENT','SOLUTION_APPROACH','TARGETED_BENEFITS'].includes(s.purpose)).slice(0,5).map(s=>`<div class="finding"><div class="card-meta"><span>${s.purpose==='SOLUTION_APPROACH'?'Cloud Inventory approach':s.purpose==='TARGETED_BENEFITS'?'Targeted benefits':'Observation enhancement'}</span><span>${esc(fmtDateTime(s.created_at))}</span><span class="badge ${s.review_state==='APPROVED'?'badge-success':'badge-warning'}">${esc(s.review_state)}</span></div><p>${esc(((s.content.solution_text || s.content.enhanced_text || (s.content.benefits||[]).map(item=>item.statement).join('; ') || '')).slice(0,220))}${(s.content.solution_text || s.content.enhanced_text || (s.content.benefits||[]).map(item=>item.statement).join('; ') || '').length>220?'…':''}</p></div>`).join('')}</section>
       <section class="inspector-card"><h3>Collaboration comments</h3><form id="comment-form"><input type="hidden" name="section_id" value="${section.id}"><div class="field"><label class="sr-only">Comment</label><textarea name="body" required placeholder="Add a review note, question, or follow-up request."></textarea></div><button class="btn btn-ghost btn-small btn-wide" type="submit">Add comment</button></form>${comments.map(c=>`<div class="finding"><div class="card-meta"><strong>${esc(c.author_name)}</strong><span>${fmtDate(c.created_at)}</span></div><p>${esc(c.body)}</p><span class="badge ${c.status==='RESOLVED'?'badge-success':'badge-warning'}">${esc(c.status)}</span>${canR&&c.status==='OPEN'?`<button class="btn btn-ghost btn-small" data-action="resolve-comment" data-id="${c.id}">Resolve</button>`:''}</div>`).join('') || '<p class="help">No comments for this section.</p>'}</section>
@@ -1114,7 +1110,6 @@ function reportSectionHasContent(section) {
   return Boolean(
     section.narrative?.trim() ||
     section.responses?.some(response => (response.narrative || '').trim() || response.payload) ||
-    report.findings.some(item => item.section_id === section.id && item.status !== 'REJECTED') ||
     report.evidence.some(item => item.section_id === section.id && ['READY','AVAILABLE'].includes(item.status)) ||
     report.benefits.some(item => item.section_id === section.id && item.approval_state === 'APPROVED') ||
     Boolean(section.cloud_inventory_approach?.text?.trim())
@@ -1124,7 +1119,7 @@ function reportSectionHasContent(section) {
 function reportPreviewSection(section) {
   const report = state.report;
   const responses = (section.responses || []).filter(response => (response.narrative || '').trim() || response.payload);
-  const findings = report.findings.filter(item => item.section_id === section.id && item.status !== 'REJECTED');
+  const findings = report.findings.filter(item => item.section_id === section.id && !['REJECTED','SUPERSEDED'].includes(item.status));
   const findingIds = new Set(findings.map(item => item.id));
   const mappings = report.capability_mappings.filter(item => (item.section_id === section.id || findingIds.has(item.finding_id)) && item.approval_state === 'APPROVED');
   const approach = section.cloud_inventory_approach?.text || '';
@@ -1135,7 +1130,6 @@ function reportPreviewSection(section) {
     <h2>${esc(section.title)}</h2>
     ${section.narrative?.trim()?`<div class="compiled-narrative">${esc(section.narrative).replaceAll('\n','<br>')}</div>`:''}
     ${responses.length?`<h3>Discovery Responses</h3>${responses.map(response=>`<div class="compiled-response"><strong>${esc(response.question)}</strong><p>${esc(response.narrative || JSON.stringify(response.payload || {}))}</p></div>`).join('')}`:''}
-    ${findings.length?`<h3>Current-State Findings</h3><ul>${findings.map(item=>`<li><strong>${esc(item.finding_type.replaceAll('_',' '))}:</strong> ${esc(item.statement)}${item.impact?`<div class="help"><strong>Impact:</strong> ${esc(item.impact)}</div>`:''}</li>`).join('')}</ul>`:''}
     ${approach?`<h3>Cloud Inventory Approach</h3><div class="compiled-narrative">${esc(approach).replaceAll('\n','<br>')}</div>`:''}
     ${mappings.length?`<h3>Mapped Cloud Inventory Functionality</h3><ul>${mappings.map(item=>`<li><strong>${esc(item.capability_name)}:</strong> ${esc(item.rationale)}${item.source_label?`<div class="help"><strong>Mapped from:</strong> ${esc(item.source_label)}</div>`:''}</li>`).join('')}</ul>`:''}
     ${benefits.length?`<h3>Benefits</h3><ul>${benefits.map(item=>`<li>${esc(item.statement)}</li>`).join('')}</ul>`:''}
@@ -1273,7 +1267,7 @@ function scheduleNarrativeSave(sectionId, value, statusElement) {
       statusElement.textContent = 'Saving...';
       const result = await api(`/api/reports/${state.report.report.id}/sections/${sectionId}`, {method:'PATCH', body:{narrative:value,expected_version:section?.version}});
       statusElement.textContent = result.offlineQueued ? 'Queued offline' : 'Saved';
-      if (section && !result.offlineQueued) { section.narrative=value; section.version=result.version; }
+      if (section && !result.offlineQueued) { section.narrative=value; section.version=result.version; if(Array.isArray(result.findings)){ state.report.findings=state.report.findings.filter(item=>item.section_id!==sectionId).concat(result.findings); } }
     } catch (e) {
       statusElement.textContent=e.status===409?'Conflict - reloading':'Save failed';
       toast(e.status===409?'This section changed in another session. The latest version is being loaded.':e.message,'error');
@@ -1364,9 +1358,6 @@ function schedulePromptSave(sectionId, promptId, value, statusElement) {
   state.saveTimers.set(`prompt:${promptId}`, timer);
 }
 
-function showDetailedFinding() {
-  showModal('Add finding', `<form id="finding-form"><div class="field"><label>Finding type</label><select name="finding_type"><option>OBSERVATION</option><option>PAIN_POINT</option><option>RISK</option><option>GAP</option><option>STRENGTH</option><option>OPPORTUNITY</option></select></div><div class="field"><label>Finding</label><textarea name="statement" required></textarea></div><div class="field"><label>Impact</label><textarea name="impact"></textarea></div><div class="field"><label>Confidence</label><select name="confidence"><option>HIGH</option><option selected>MEDIUM</option><option>LOW</option></select></div><button class="btn btn-primary btn-wide" type="submit">Add finding</button></form>`, '');
-}
 function showAddSection() {
   showModal('Add report section', `<form id="section-form"><div class="field"><label>Section title</label><input name="title" required></div><div class="field"><label>Process module</label><select name="process_module"><option value="">General</option>${['RECEIVING','PUTAWAY','TRANSFER','ORDER_MANAGEMENT','PICKING','PACKING','SHIPPING','CYCLE_COUNT','WORK_ORDERS','PRINTING','FIELD_INVENTORY','MANUFACTURING'].map(x=>`<option>${x}</option>`).join('')}</select></div><p class="help">All report sections and discovery questions are optional.</p><button class="btn btn-primary btn-wide" type="submit">Add section</button></form>`, '');
 }
@@ -1377,7 +1368,7 @@ function showRemoveSection() {
 function showMapCapability() {
   const section = selectedSection();
   const sources = sectionObservationSources(section);
-  if (!sources.length) { toast('Capture a current-operations note, guided response, or finding before mapping functionality.', 'error'); return; }
+  if (!sources.length) { toast('Capture Current Operations Narrative content or a guided response before mapping functionality.', 'error'); return; }
   const options = state.capabilities.filter(c=>c.status==='APPROVED').map(c=>`<option value="${c.id}">${esc(c.domain)} - ${esc(c.name)}</option>`).join('');
   if (!options) { toast('No approved Cloud Inventory capabilities are available.', 'error'); return; }
   showModal('Map Cloud Inventory functionality', `<form id="mapping-form"><input type="hidden" name="section_id" value="${section.id}"><div class="field"><label>Operational observation or finding</label><select name="source_ref">${sources.map(item=>`<option value="${esc(item.ref)}">${esc(item.type.replaceAll('_',' '))} - ${esc(item.statement.slice(0,110))}</option>`).join('')}</select><small>General notes and guided responses are treated as Observations for mapping; their original wording and classification are not changed.</small></div><div class="field"><label>Approved capability</label><select name="capability_id">${options}</select></div><div class="field"><label>Rationale</label><textarea name="rationale" required placeholder="Explain how this approved capability supports the selected observation, finding, or operational need."></textarea></div><div class="field"><label>Prerequisites</label><textarea name="prerequisites"></textarea></div><button class="btn btn-primary btn-wide" type="submit">Create mapping for review</button></form>`, '');
@@ -1709,13 +1700,13 @@ async function handleSubmit(event) {
       if(!area)throw new Error('Select an Area of operation before capturing a note.');
       if(!destination)throw new Error(`The ${quickEntryAreaLabel(area)} report section is not available.`);
       const o=formObject(form);
-      await api(`/api/reports/${reportId}/quick-capture`,{method:'POST',body:{section_id:destination.id,note:o.note,finding_type:o.finding_type,client_mutation_id:uid()}});
+      const result=await api(`/api/reports/${reportId}/quick-capture`,{method:'POST',body:{section_id:destination.id,note:o.note,finding_type:o.finding_type,client_mutation_id:uid()}});
+      if(!result.offlineQueued){destination.narrative=result.narrative||destination.narrative;destination.version=result.version||destination.version;if(Array.isArray(result.findings)){state.report.findings=state.report.findings.filter(item=>item.section_id!==destination.id).concat(result.findings);}}
       form.elements.note.value='';
       form.elements.note.focus();
       toast(`${quickEntryAreaLabel(area)} ${o.finding_type.replaceAll('_',' ').toLowerCase()} captured.`, 'success');
       return;
     }
-    if(form.id==='finding-form'){const o=formObject(form);await api(`/api/reports/${reportId}/findings`,{method:'POST',body:{...o,section_id:section.id,client_mutation_id:uid()}});closeModal();renderReport(reportId,section.id);return;}
     if(form.id==='section-form'){const o=formObject(form);o.process_module=o.process_module||null;const result=await api(`/api/reports/${reportId}/sections`,{method:'POST',body:o});closeModal();renderReport(reportId,result.id||section.id);return;}
     if(form.id==='remove-section-form'){const o=formObject(form);await api(`/api/reports/${reportId}/sections/${section.id}`,{method:'PATCH',body:{state:'REMOVED',removed_reason:o.removed_reason}});closeModal();renderReport(reportId);return;}
     if(form.id==='mapping-form'){await api(`/api/reports/${reportId}/capability-mappings`,{method:'POST',body:formObject(form)});closeModal();renderReport(reportId,section.id);return;}
@@ -1770,7 +1761,6 @@ async function handleClick(event) {
     if(action==='open-demo-preparation'){navigateReportScreen('demo-preparation');return;}
     if(action==='add-section'){showAddSection();return;}
     if(action==='remove-section'){showRemoveSection();return;}
-    if(action==='new-finding'){showDetailedFinding();return;}
     if(action==='section-upload-photo'){showSectionPhotoUpload(selectedSection());return;}
     if(action==='open-evidence-preview'){showEvidencePreview(target.dataset.id);return;}
     if(action==='move-selected-evidence'){showMoveSelectedEvidence();return;}

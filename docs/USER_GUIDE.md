@@ -4,7 +4,7 @@
 
 ### Contributor
 
-Captures discovery notes, answers prompts, uploads evidence, records findings and metrics, and edits authorized report sections.
+Captures discovery notes, answers prompts, uploads evidence, records metrics, and edits authorized report sections.
 
 ### Reviewer
 
@@ -50,7 +50,7 @@ Multiple contributors may each have a report, or they may work in one report usi
 5. Optionally enter a caption, then select **Take Photo** to invoke the native camera or **Choose File** to attach an existing image or document.
 6. Continue capturing notes and evidence. Change the Area of Operation only when the destination report section changes.
 
-Quick Entry routes each capture immediately into the selected detailed report section. **Other** routes to General Operational Observations. The application queues notes and evidence during a transient connection loss and retains the destination section selected at capture time. Confirm the sync indicator before leaving the site.
+Quick Entry routes each note immediately into the selected section’s **Current Operations Narrative**. The selected Type is retained as an editable subheading such as Observation, Pain Point, Risk, Gap, Strength, or Opportunity. **Other** routes to General Operational Observations. The application queues notes and evidence during a transient connection loss and retains the destination section selected at capture time. Confirm the sync indicator before leaving the site.
 
 ### Strong evidence pattern
 
@@ -110,7 +110,7 @@ The owner:
 1. selects the target consolidated report;
 2. selects source reports from the same prospect;
 3. runs merge and reviews conflicts;
-4. verifies cloned evidence and findings;
+4. verifies cloned evidence and unified Current Operations Narrative content;
 5. chooses whether source reports enter the recovery/deletion lifecycle.
 
 The target report records source lineage. Merge should not be treated as automatic editorial reconciliation.
@@ -144,7 +144,7 @@ AI is available only when enabled by administrators and privacy policy. AI outpu
 
 ### Fast AI Enhanced Wording
 
-Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. The workflow is text-only and uses the section narrative, guided responses, formal findings, and relevant metrics. Photographs are human-reviewed evidence and are never sent to AI for interpretation.
+Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. The workflow is text-only and uses the Current Operations Narrative, its preserved classification subheadings, guided responses, and relevant metrics. AI enhancement must preserve user-selected Observation/Pain Point/Risk/Gap/Strength/Opportunity classifications. Photographs are human-reviewed evidence and are never sent to AI for interpretation.
 
 1. Select **AI Enhance**.
 2. The application first checks the database for an active unaccepted suggestion created from the same written sources.

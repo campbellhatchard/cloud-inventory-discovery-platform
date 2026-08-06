@@ -200,7 +200,7 @@ def test_targeted_benefit_snapshot_contains_solution_mapping_and_metrics(admin_s
     assert snapshot["solution"]["text"].startswith("Cloud Inventory can present")
     assert any(item["id"] == mapping["id"] for item in snapshot["approved_mappings"])
     assert any(item["id"] == metric.json()["id"] for item in snapshot["metrics"])
-    assert any(item["ref"] == "section:narrative" for item in snapshot["operational_sources"])
+    assert any(item["ref"].startswith("finding:") and item["finding_type"] == "OBSERVATION" for item in snapshot["operational_sources"])
 
 
 def test_targeted_benefit_suggestion_accepts_selected_items_as_pending(admin_session):

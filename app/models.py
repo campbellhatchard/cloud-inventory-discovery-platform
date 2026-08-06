@@ -283,6 +283,7 @@ class Finding(Base, TimestampMixin):
     impact: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[str] = mapped_column(String(20), default="MEDIUM")
     status: Mapped[str] = mapped_column(String(20), default="DRAFT")
+    source_type: Mapped[str] = mapped_column(String(30), default="LEGACY")
     client_mutation_id: Mapped[str | None] = mapped_column(String(36))
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
 

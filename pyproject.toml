@@ -1,6 +1,6 @@
 [project]
 name = "cloud-inventory-discovery-platform"
-version = "0.8.8"
+version = "0.8.9"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]

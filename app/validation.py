@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .current_operations import CURRENT_FINDING_EXCLUDED_STATUSES
 from .readiness import calculate_report_readiness
 from .models import (
     AiSuggestion,
@@ -43,7 +44,7 @@ def validate_report(db: Session, report: Report, final_requested: bool) -> list[
 
     for section in active_sections:
         response_count = db.scalar(select(func.count(Response.id)).where(Response.section_id == section.id)) or 0
-        finding_count = db.scalar(select(func.count(Finding.id)).where(Finding.section_id == section.id, Finding.status != "REJECTED")) or 0
+        finding_count = db.scalar(select(func.count(Finding.id)).where(Finding.section_id == section.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES))) or 0
         evidence_count = db.scalar(select(func.count(EvidenceItem.id)).where(EvidenceItem.section_id == section.id)) or 0
         has_content = bool(section.narrative.strip()) or response_count > 0 or finding_count > 0 or evidence_count > 0
         if has_content and _PLACEHOLDER.search(section.narrative or ""):
@@ -104,11 +105,11 @@ def validate_report(db: Session, report: Report, final_requested: bool) -> list[
             section_id=row.get("section_id"),
         )
 
-    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.status != "REJECTED")).all())
+    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES))).all())
     for finding in findings:
         mapped = db.scalar(select(func.count(CapabilityMapping.id)).where(CapabilityMapping.finding_id == finding.id)) or 0
         if finding.finding_type in {"PAIN_POINT", "RISK", "GAP"} and not mapped:
-            add("FINDING_UNADDRESSED", "WARNING", "A pain point or gap has no mapped Cloud Inventory capability.", section_id=finding.section_id, target_id=finding.id)
+            add("FINDING_UNADDRESSED", "WARNING", "A Pain Point, Risk, or Gap in the Current Operations Narrative has no mapped Cloud Inventory capability.", section_id=finding.section_id, target_id=finding.id)
 
     return issues
 

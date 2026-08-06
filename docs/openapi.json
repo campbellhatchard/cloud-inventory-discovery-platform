@@ -2288,7 +2288,7 @@
   },
   "info": {
     "title": "Cloud Inventory Site Discovery",
-    "version": "0.8.8"
+    "version": "0.8.9"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4896,6 +4896,7 @@
     },
     "/api/reports/{report_id}/findings": {
       "post": {
+        "description": "Backward-compatible typed-note endpoint.\n\nSection-scoped findings are now written into Current Operations Narrative and\nrepresented by a synchronized internal typed index. The user-facing Findings\nediting surface was retired in v0.8.9.",
         "operationId": "create_finding_api_reports__report_id__findings_post",
         "parameters": [
           {

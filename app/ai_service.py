@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .audit import audit
 from .config import Settings
+from .current_operations import CURRENT_FINDING_EXCLUDED_STATUSES, NARRATIVE_DERIVED_SOURCE
 from .models import (
     AiJob,
     AiSuggestion,
@@ -86,7 +87,7 @@ def build_context(db: Session, report: Report, section: ReportSection | None, pu
                 ],
             }
         )
-    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id)).all())
+    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES), Finding.source_type != NARRATIVE_DERIVED_SOURCE)).all())
     evidence_stmt = select(EvidenceItem).where(EvidenceItem.report_id == report.id, EvidenceItem.extracted_text.is_not(None))
     if section:
         evidence_stmt = evidence_stmt.where(EvidenceItem.section_id == section.id)
@@ -213,7 +214,7 @@ def build_observation_snapshot(
     findings = list(
         db.scalars(
             select(Finding)
-            .where(Finding.report_id == report.id, Finding.section_id == section.id, Finding.status != "REJECTED")
+            .where(Finding.report_id == report.id, Finding.section_id == section.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES), Finding.source_type != NARRATIVE_DERIVED_SOURCE)
             .order_by(Finding.created_at)
         ).all()
     )
@@ -481,6 +482,7 @@ def generate_observation_draft(
             "Treat base_ai_wording as the text being edited and preserve wording that does not need to change. "
             "Do not redraft from scratch unless the refinement request requires it. "
             "Use the supplied source material only as the factual authority. Preserve uncertainty and do not add recommendations, benefits, root causes, frequencies, performance claims, or numbers that are not explicitly supplied. "
+            "Current Operations Narrative classification headings such as Observation:, Pain Point:, Risk:, Gap:, Strength:, and Opportunity: are user-selected classifications. Preserve those classifications and do not flatten, remove, rename, or invent classification headings. "
             "Do not analyze photographs. Return only JSON with enhanced_text, change_summary, gaps, source_refs, claims. "
             "Keep enhanced_text focused and normally no longer than the source material."
         )
@@ -488,6 +490,7 @@ def generate_observation_draft(
         system = (
             "Rewrite the supplied CURRENT-operations discovery notes into concise professional customer-facing wording. "
             "Use only supplied facts. Preserve uncertainty. Do not add recommendations, benefits, root causes, frequencies, performance claims, or numbers that are not explicitly supplied. "
+            "Current Operations Narrative classification headings such as Observation:, Pain Point:, Risk:, Gap:, Strength:, and Opportunity: are user-selected classifications. Preserve those classifications and do not flatten, remove, rename, or invent classification headings. "
             "Do not analyze photographs. Return only JSON with enhanced_text, change_summary, gaps, source_refs, claims. "
             "Keep enhanced_text focused and normally no longer than the source material."
         )
@@ -555,7 +558,7 @@ def finalize_observation_draft(
     if verification["verification_status"] == "BLOCKED" and verification["unsupported_claims"]:
         repair_system = (
             "Remove or cautiously rephrase every unsupported claim identified by the verifier. "
-            "Use only supplied written sources and add no new facts. Return only JSON with enhanced_text."
+            "Use only supplied written sources and add no new facts. Preserve every user-selected Current Operations Narrative classification heading (Observation, Pain Point, Risk, Gap, Strength, Opportunity) and do not invent new classifications. Return only JSON with enhanced_text."
         )
         repair_payload = {
             "sources": [item for item in snapshot.get("sources") or [] if item.get("type") != "PHOTO"],
@@ -668,7 +671,7 @@ def build_solution_snapshot(db: Session, report: Report, section: ReportSection)
     findings = list(
         db.scalars(
             select(Finding)
-            .where(Finding.report_id == report.id, Finding.section_id == section.id, Finding.status != "REJECTED")
+            .where(Finding.report_id == report.id, Finding.section_id == section.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES))
             .order_by(Finding.created_at)
         ).all()
     )
@@ -681,7 +684,7 @@ def build_solution_snapshot(db: Session, report: Report, section: ReportSection)
     )
 
     operational_sources: list[dict[str, Any]] = []
-    if section.narrative.strip():
+    if section.narrative.strip() and not findings:
         operational_sources.append({
             "ref": "section:narrative",
             "source_type": "GENERAL_OBSERVATION",
@@ -898,7 +901,7 @@ def run_solution_approach(
     prior_suggestion: AiSuggestion | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if not snapshot.get("operational_sources"):
-        raise ValueError("Enter current operations notes or findings before generating a Cloud Inventory approach.")
+        raise ValueError("Enter Current Operations Narrative content before generating a Cloud Inventory approach.")
     if not snapshot.get("approved_capabilities"):
         raise ValueError("No approved Cloud Inventory capabilities are available for this operational area.")
 
@@ -909,7 +912,7 @@ def run_solution_approach(
 
     system = (
         "You are a senior Cloud Inventory solution consultant drafting the 'Cloud Inventory Approach' section of a professional customer discovery report. "
-        "Use only the supplied operational observations/findings, approved capability catalog, approved knowledge, and metrics. "
+        "Use only the supplied Current Operations Narrative classifications, guided observations, approved capability catalog, approved knowledge, and metrics. "
         "General notes and guided responses marked GENERAL_OBSERVATION must be treated as observations when determining relevant functionality. "
         "Do not manufacture pain points from neutral observations. Do not invent product functionality, integrations, configuration, guarantees, performance improvements, or implementation commitments. "
         "Treat approved capability descriptions as deliberately high-level and concise. Use approved PRODUCT_CONFIGURATION knowledge to explain only the configuration behavior that is directly relevant to the observed customer operation. "
@@ -1226,7 +1229,7 @@ def run_targeted_benefits(
     prior_suggestion: AiSuggestion | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if not snapshot.get("operational_sources"):
-        raise ValueError("Enter current operations notes or findings before generating targeted benefits.")
+        raise ValueError("Enter Current Operations Narrative content before generating targeted benefits.")
     if not snapshot.get("solution") and not snapshot.get("approved_mappings"):
         raise ValueError("Enter or accept a Cloud Inventory approach, or approve a capability mapping, before generating targeted benefits.")
     prior = []
@@ -1664,7 +1667,7 @@ def build_report_quality_snapshot(db: Session, report: Report) -> dict[str, Any]
             .where(Response.section_id == section.id, PromptDefinition.active.is_(True))
             .order_by(PromptDefinition.display_order)
         ).all()
-        findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.section_id == section.id, Finding.status != "REJECTED").order_by(Finding.created_at)).all())
+        findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.section_id == section.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES)).order_by(Finding.created_at)).all())
         solution = db.scalar(
             select(SectionContentVersion)
             .where(
@@ -1683,7 +1686,7 @@ def build_report_quality_snapshot(db: Session, report: Report) -> dict[str, Any]
         ).all()
         benefits = list(db.scalars(select(Benefit).where(Benefit.report_id == report.id, Benefit.section_id == section.id).order_by(Benefit.created_at)).all())
         sources: list[dict[str, Any]] = []
-        if section.narrative.strip():
+        if section.narrative.strip() and not findings:
             sources.append({"ref": f"section:{section.id}:narrative", "label": f"{section.title} current operations", "text": section.narrative})
         for response, prompt in responses:
             text = response.narrative.strip() or (json.dumps(response.payload, ensure_ascii=False) if response.payload else "")

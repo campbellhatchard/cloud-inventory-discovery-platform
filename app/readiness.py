@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .config import Settings
+from .current_operations import CURRENT_FINDING_EXCLUDED_STATUSES
 from .models import (
     AiJob,
     AiSuggestion,
@@ -63,7 +64,7 @@ def calculate_report_readiness(db: Session, report: Report) -> dict[str, Any]:
             .order_by(ReportSection.display_order)
         ).all()
     )
-    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.status != "REJECTED")).all())
+    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES))).all())
     responses = list(db.scalars(select(Response).where(Response.report_id == report.id)).all())
     approaches = list(
         db.scalars(

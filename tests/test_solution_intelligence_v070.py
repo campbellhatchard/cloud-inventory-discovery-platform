@@ -150,9 +150,9 @@ def test_solution_snapshot_uses_general_notes_findings_and_approved_knowledge(ad
         db_section = db.get(ReportSection, section["id"])
         snapshot = build_solution_snapshot(db, report, db_section)
 
-    narrative = next(item for item in snapshot["operational_sources"] if item["ref"] == "section:narrative")
-    assert narrative["source_type"] == "GENERAL_OBSERVATION"
-    assert narrative["finding_type"] == "OBSERVATION"
+    narrative = next(item for item in snapshot["operational_sources"] if item["finding_type"] == "OBSERVATION" and "printed pick lists" in item["text"])
+    assert narrative["ref"].startswith("finding:")
+    assert narrative["source_type"] == "FINDING"
     guided = next(item for item in snapshot["operational_sources"] if item["ref"].startswith("response:"))
     assert guided["source_type"] == "GENERAL_OBSERVATION"
     explicit = next(item for item in snapshot["operational_sources"] if item["ref"] == f"finding:{finding.json()['id']}")
@@ -384,7 +384,9 @@ def test_frontend_solution_intelligence_contract():
     styles = (root / "app" / "static" / "styles.css").read_text(encoding="utf-8")
     assert 'data-action="generate-solution-approach"' in app_js
     assert 'id="ai-solution-modal"' in app_js
-    assert "automatically treated as <strong>Observations</strong>" in app_js
+    assert "single editable record of current operations" in app_js
+    assert 'id="findings"' not in app_js
+    assert 'data-action="new-finding"' not in app_js
     assert "purpose:'SOLUTION_APPROACH'" in app_js
     assert 'data-action="accept-solution-approach"' in app_js
     assert 'data-action="import-knowledge"' in app_js

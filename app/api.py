@@ -47,6 +47,13 @@ from .auth import (
     verify_password,
 )
 from .config import Settings, get_settings
+from .current_operations import (
+    CURRENT_FINDING_EXCLUDED_STATUSES,
+    NARRATIVE_DERIVED_SOURCE,
+    append_narrative_entry,
+    normalize_finding_type,
+    sync_narrative_findings,
+)
 from .configuration_intelligence import CONFIGURATION_KNOWLEDGE_KIND, CONFIGURATION_SOURCE_TYPE, load_configuration_template, normalize_configuration_template
 from .database import get_db
 from .extraction import extract_text
@@ -1241,7 +1248,7 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
     response_map: dict[str, list[dict[str, Any]]] = {}
     for response, prompt in responses:
         response_map.setdefault(response.section_id, []).append({"id": response.id, "prompt_id": prompt.id, "question": prompt.question, "answer_type": prompt.answer_type, "narrative": response.narrative, "payload": response.payload, "version": response.version})
-    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id).order_by(Finding.created_at)).all())
+    findings = list(db.scalars(select(Finding).where(Finding.report_id == report.id, Finding.status.notin_(CURRENT_FINDING_EXCLUDED_STATUSES)).order_by(Finding.created_at)).all())
     metrics = list(db.scalars(select(Metric).where(Metric.report_id == report.id).order_by(Metric.created_at)).all())
     evidence_items = list(db.scalars(select(EvidenceItem).where(EvidenceItem.report_id == report.id).order_by(EvidenceItem.created_at)).all())
     evidence_ids = [item.id for item in evidence_items]
@@ -1330,7 +1337,7 @@ def get_report(report_id: str, user: User = Depends(enforce_password_changed), d
             },
         } for s in sections],
         "prompts_by_module": prompts_by_module,
-        "findings": [{"id": f.id, "section_id": f.section_id, "finding_type": f.finding_type, "statement": f.statement, "impact": f.impact, "confidence": f.confidence, "status": f.status} for f in findings],
+        "findings": [{"id": f.id, "section_id": f.section_id, "finding_type": f.finding_type, "statement": f.statement, "impact": f.impact, "confidence": f.confidence, "status": f.status, "source_type": f.source_type} for f in findings],
         "metrics": [{"id": m.id, "section_id": m.section_id, "name": m.name, "value_numeric": m.value_numeric, "value_text": m.value_text, "unit": m.unit, "period": m.period, "source": m.source, "confidence": m.confidence} for m in metrics],
         "evidence": [{
             "id": item.id, "section_id": item.section_id, "evidence_type": item.evidence_type,
@@ -1742,14 +1749,25 @@ def update_section(report_id: str, section_id: str, payload: SectionUpdate, user
         require_report_access(db, user, report, "OWNER")
         if not data.get("removed_reason") and not section.removed_reason:
             raise HTTPException(400, "A removal reason is required.")
+    narrative_findings = None
     for key, value in data.items():
         setattr(section, key, value)
+    if "narrative" in data:
+        narrative_findings = sync_narrative_findings(db, report_id=report.id, section=section, actor_user_id=user.id)
     section.version += 1
     section.updated_by = user.id
     _increment_report(report)
     audit(db, actor=user, action="REPORT_SECTION_UPDATED", target_type="REPORT_SECTION", target_id=section.id, prospect_id=report.prospect_id, metadata={"report_id": report.id, "fields": sorted(data)})
     db.commit()
-    return {"ok": True, "version": section.version, "report_revision": report.revision}
+    return {
+        "ok": True,
+        "version": section.version,
+        "report_revision": report.revision,
+        "findings": None if narrative_findings is None else [
+            {"id": f.id, "section_id": f.section_id, "finding_type": f.finding_type, "statement": f.statement, "impact": f.impact, "confidence": f.confidence, "status": f.status, "source_type": f.source_type}
+            for f in narrative_findings
+        ],
+    }
 
 
 @router.put("/reports/{report_id}/sections/{section_id}/responses", dependencies=[Depends(require_csrf)])
@@ -1796,35 +1814,103 @@ def quick_capture(report_id: str, payload: QuickCaptureRequest, user: User = Dep
     if payload.client_mutation_id:
         existing = db.scalar(select(Finding).where(Finding.report_id == report.id, Finding.client_mutation_id == payload.client_mutation_id))
         if existing:
-            return {"id": existing.id, "deduplicated": True}
-    finding = Finding(report_id=report.id, section_id=section.id, finding_type=payload.finding_type, statement=payload.note, impact=payload.impact, confidence=payload.confidence, client_mutation_id=payload.client_mutation_id, created_by=user.id)
+            return {"id": existing.id, "deduplicated": True, "version": section.version, "narrative": section.narrative}
+    try:
+        finding_type = normalize_finding_type(payload.finding_type)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    section.narrative = append_narrative_entry(
+        section.narrative,
+        finding_type=finding_type,
+        statement=payload.note,
+        impact=payload.impact,
+    )
+    finding = Finding(
+        report_id=report.id,
+        section_id=section.id,
+        finding_type=finding_type,
+        statement=payload.note.strip(),
+        impact=payload.impact.strip() if payload.impact else None,
+        confidence=payload.confidence,
+        status="DRAFT",
+        source_type=NARRATIVE_DERIVED_SOURCE,
+        client_mutation_id=payload.client_mutation_id,
+        created_by=user.id,
+    )
     db.add(finding)
+    db.flush()
+    narrative_findings = sync_narrative_findings(db, report_id=report.id, section=section, actor_user_id=user.id)
     section.updated_by = user.id
     section.version += 1
     _increment_report(report)
-    audit(db, actor=user, action="QUICK_CAPTURE_CREATED", target_type="FINDING", target_id=finding.id, prospect_id=report.prospect_id, metadata={"report_id": report.id, "section_id": section.id})
+    audit(
+        db,
+        actor=user,
+        action="QUICK_CAPTURE_APPENDED_TO_NARRATIVE",
+        target_type="REPORT_SECTION",
+        target_id=section.id,
+        prospect_id=report.prospect_id,
+        metadata={"report_id": report.id, "section_id": section.id, "finding_type": finding_type, "derived_finding_id": finding.id},
+    )
     db.commit()
-    return {"id": finding.id, "report_revision": report.revision}
+    return {
+        "id": finding.id, "version": section.version, "narrative": section.narrative, "report_revision": report.revision,
+        "findings": [
+            {"id": f.id, "section_id": f.section_id, "finding_type": f.finding_type, "statement": f.statement, "impact": f.impact, "confidence": f.confidence, "status": f.status, "source_type": f.source_type}
+            for f in narrative_findings
+        ],
+    }
 
 
 @router.post("/reports/{report_id}/findings", dependencies=[Depends(require_csrf)])
 def create_finding(report_id: str, payload: FindingCreate, user: User = Depends(enforce_password_changed), db: Session = Depends(get_db)):
+    """Backward-compatible typed-note endpoint.
+
+    Section-scoped findings are now written into Current Operations Narrative and
+    represented by a synchronized internal typed index. The user-facing Findings
+    editing surface was retired in v0.8.9.
+    """
     report = _get_report(db, report_id)
     require_report_access(db, user, report)
+    try:
+        finding_type = normalize_finding_type(payload.finding_type)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if payload.section_id:
         section = _get_section(db, payload.section_id)
         if section.report_id != report.id:
             raise HTTPException(400, "Section does not belong to report.")
-    finding = Finding(report_id=report.id, section_id=payload.section_id, finding_type=payload.finding_type, statement=payload.statement, impact=payload.impact, confidence=payload.confidence, client_mutation_id=payload.client_mutation_id, created_by=user.id)
-    db.add(finding)
-    if payload.section_id:
-        section = _get_section(db, payload.section_id)
+        if payload.client_mutation_id:
+            existing = db.scalar(select(Finding).where(Finding.report_id == report.id, Finding.client_mutation_id == payload.client_mutation_id))
+            if existing:
+                return {"id": existing.id, "deduplicated": True, "version": section.version, "narrative": section.narrative}
+        section.narrative = append_narrative_entry(
+            section.narrative, finding_type=finding_type, statement=payload.statement, impact=payload.impact
+        )
+        finding = Finding(
+            report_id=report.id, section_id=section.id, finding_type=finding_type,
+            statement=payload.statement.strip(), impact=payload.impact.strip() if payload.impact else None,
+            confidence=payload.confidence, status="DRAFT", source_type=NARRATIVE_DERIVED_SOURCE,
+            client_mutation_id=payload.client_mutation_id, created_by=user.id,
+        )
+        db.add(finding)
+        db.flush()
+        sync_narrative_findings(db, report_id=report.id, section=section, actor_user_id=user.id)
         section.version += 1
         section.updated_by = user.id
+        audit(db, actor=user, action="TYPED_NOTE_APPENDED_TO_NARRATIVE", target_type="REPORT_SECTION", target_id=section.id, prospect_id=report.prospect_id, metadata={"report_id": report.id, "finding_type": finding_type, "derived_finding_id": finding.id})
+    else:
+        finding = Finding(
+            report_id=report.id, section_id=None, finding_type=finding_type,
+            statement=payload.statement, impact=payload.impact, confidence=payload.confidence,
+            source_type="LEGACY", client_mutation_id=payload.client_mutation_id, created_by=user.id,
+        )
+        db.add(finding)
+        db.flush()
+        audit(db, actor=user, action="FINDING_CREATED", target_type="FINDING", target_id=finding.id, prospect_id=report.prospect_id, metadata={"report_id": report.id})
     _increment_report(report)
-    audit(db, actor=user, action="FINDING_CREATED", target_type="FINDING", target_id=finding.id, prospect_id=report.prospect_id, metadata={"report_id": report.id})
     db.commit()
-    return {"id": finding.id}
+    return {"id": finding.id, "version": section.version if payload.section_id else None, "narrative": section.narrative if payload.section_id else None}
 
 
 @router.post("/reports/{report_id}/metrics", dependencies=[Depends(require_csrf)])
@@ -1912,7 +1998,7 @@ def create_mapping(report_id: str, payload: CapabilityMappingCreate, user: User 
     if not capability:
         raise HTTPException(400, "Invalid Cloud Inventory capability.")
     if capability.status != "APPROVED":
-        raise HTTPException(409, "Only approved capabilities can be mapped to prospect observations or findings.")
+        raise HTTPException(409, "Only approved capabilities can be mapped to Current Operations Narrative entries or guided observations.")
     source = _resolve_mapping_source(
         db,
         report,
@@ -2471,10 +2557,11 @@ def merge_reports(payload: MergeRequest, user: User = Depends(enforce_password_c
                     target_section.narrative += f"\n\n--- Contributor report {source.title} ---\n{source_section.narrative}"
                 elif not target_section.narrative.strip():
                     target_section.narrative = source_section.narrative
+            sync_narrative_findings(db, report_id=target.id, section=target_section, actor_user_id=user.id)
             target_section.version += 1
             db.add(MergeLineage(merge_operation_id=operation.id, target_type="REPORT_SECTION", target_id=target_section.id, source_report_id=source.id, source_type="REPORT_SECTION", source_id=source_section.id, source_version=source_section.version))
-            for finding in db.scalars(select(Finding).where(Finding.report_id == source.id, Finding.section_id == source_section.id)).all():
-                clone = Finding(report_id=target.id, section_id=target_section.id, finding_type=finding.finding_type, statement=finding.statement, impact=finding.impact, confidence=finding.confidence, status=finding.status, created_by=finding.created_by)
+            for finding in db.scalars(select(Finding).where(Finding.report_id == source.id, Finding.section_id == source_section.id, Finding.source_type != NARRATIVE_DERIVED_SOURCE)).all():
+                clone = Finding(report_id=target.id, section_id=target_section.id, finding_type=finding.finding_type, statement=finding.statement, impact=finding.impact, confidence=finding.confidence, status=finding.status, source_type=finding.source_type, created_by=finding.created_by)
                 db.add(clone)
                 db.flush()
                 db.add(MergeLineage(merge_operation_id=operation.id, target_type="FINDING", target_id=clone.id, source_report_id=source.id, source_type="FINDING", source_id=finding.id, source_version=None))
@@ -2692,7 +2779,7 @@ def request_ai(
                 raise HTTPException(400, "Parent Cloud Inventory approach suggestion does not belong to this section.")
         context_snapshot = build_solution_snapshot(db, report, section)
         if not context_snapshot.get("operational_sources"):
-            raise HTTPException(409, "Enter current operations notes, guided responses, or findings before generating a Cloud Inventory approach.")
+            raise HTTPException(409, "Enter Current Operations Narrative content or guided responses before generating a Cloud Inventory approach.")
         if not context_snapshot.get("approved_capabilities"):
             raise HTTPException(409, "No approved Cloud Inventory capabilities are available for this operational area. Review the capability catalog first.")
     elif payload.purpose == "TARGETED_BENEFITS":
@@ -2709,7 +2796,7 @@ def request_ai(
                 raise HTTPException(400, "Parent targeted-benefit suggestion does not belong to this section.")
         context_snapshot = build_targeted_benefits_snapshot(db, report, section)
         if not context_snapshot.get("operational_sources"):
-            raise HTTPException(409, "Enter current operations notes or findings before generating targeted benefits.")
+            raise HTTPException(409, "Enter Current Operations Narrative content before generating targeted benefits.")
         if not context_snapshot.get("solution") and not context_snapshot.get("approved_mappings"):
             raise HTTPException(409, "Enter or accept a Cloud Inventory approach, or approve a capability mapping, before generating targeted benefits.")
     elif payload.purpose == "DEMO_PLAN":
@@ -2931,6 +3018,7 @@ def review_ai(
                 )
             )
             target_section.narrative = suggested_text
+            sync_narrative_findings(db, report_id=report.id, section=target_section, actor_user_id=user.id)
             target_section.version += 1
             target_section.updated_by = user.id
             applied["narrative"] = True
@@ -3134,6 +3222,7 @@ def review_ai(
         elif suggested_text and target_section and suggestion.purpose in {"NARRATIVE", "ATTACHMENT_REVIEW"}:
             if suggested_text not in target_section.narrative:
                 target_section.narrative = f"{target_section.narrative.strip()}\n\n{suggested_text}".strip()
+                sync_narrative_findings(db, report_id=report.id, section=target_section, actor_user_id=user.id)
                 target_section.version += 1
                 target_section.updated_by = user.id
                 applied["narrative"] = True

@@ -1,4 +1,4 @@
-const CACHE = 'ci-discovery-v0.8.9';
+const CACHE = 'ci-discovery-v0.8.10';
 const SHELL = ['/', '/static/styles.css', '/static/app.js', '/static/cloud-inventory-logo-for-light-background-v0.4.1.png', '/static/cloud-inventory-logo-for-dark-background-v0.4.1.png', '/manifest.json'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

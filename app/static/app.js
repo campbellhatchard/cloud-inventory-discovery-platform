@@ -511,6 +511,31 @@ function demoPriorityForSection(sectionId) {
   return state.report.demo_section_priorities?.find(item => item.section_id === sectionId) || null;
 }
 
+function aiEnhancementReviewStatus(sectionId) {
+  const suggestions = (state.report?.ai_suggestions || [])
+    .filter(item => item.section_id === sectionId && item.purpose === 'OBSERVATION_ENHANCEMENT')
+    .slice()
+    .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')));
+  if (!suggestions.length) return {label:'Not Run', className:'ai-status-not-run'};
+  if (suggestions[0].review_state === 'APPROVED') return {label:'Accepted', className:'ai-status-accepted'};
+  return {label:'Not Reviewed', className:'ai-status-not-reviewed'};
+}
+
+function syncAiEnhancementStatus(sectionId, suggestion) {
+  if (suggestion && state.report?.ai_suggestions) {
+    const index = state.report.ai_suggestions.findIndex(item => item.id === suggestion.id);
+    if (index >= 0) state.report.ai_suggestions[index] = suggestion;
+    else state.report.ai_suggestions.unshift(suggestion);
+  }
+  const status = aiEnhancementReviewStatus(sectionId);
+  const target = document.querySelector(`[data-ai-enhance-status="${sectionId}"]`);
+  if (target) {
+    target.textContent = `Status: ${status.label}`;
+    target.classList.remove('ai-status-not-run','ai-status-not-reviewed','ai-status-accepted');
+    target.classList.add(status.className);
+  }
+}
+
 function aiSourceRefLabel(ref, section) {
   if (!ref) return '';
   if (typeof ref === 'object') return ref.label || ref.ref || '';
@@ -527,6 +552,7 @@ function aiSourceRefLabel(ref, section) {
 }
 
 function renderAiEnhancementResult(job, section) {
+  if (job?.suggestion) syncAiEnhancementStatus(section.id, job.suggestion);
   const result = job?.suggestion?.content || {};
   const enhancedText = result.enhanced_text || result.suggested_text || '';
   const target = document.getElementById('ai-enhanced-output');
@@ -552,6 +578,7 @@ function renderAiEnhancementResult(job, section) {
 }
 
 function renderStaleAiEnhancement(job, section) {
+  if (job?.suggestion) syncAiEnhancementStatus(section.id, job.suggestion);
   const target = document.getElementById('ai-enhanced-output');
   if (!target) return;
   const result = job?.suggestion?.content || {};
@@ -1073,7 +1100,7 @@ function reportSectionContent(section) {
   return `
     <div class="mobile-section-select"><label class="sr-only" for="mobile-section">Screen or section</label><select id="mobile-section" data-action="mobile-section">${reportSectionOptions(section.id)}</select></div>
     <section class="card">
-      <div class="section-head"><div><div class="card-meta">${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar"><button class="btn btn-primary btn-small" data-action="ai-enhance-observations" ${state.aiStatus?.policy?.allowed?'':'disabled'} title="${esc(state.aiStatus?.policy?.reason || 'AI status unavailable')}">AI Enhance</button><button class="btn btn-ghost btn-small" data-action="section-version-history">Version history</button>${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
+      <div class="section-head"><div><div class="card-meta">${section.process_module?`<span>${esc(section.process_module.replaceAll('_',' '))}</span>`:''}</div><h2>${esc(section.title)}</h2></div><div class="toolbar"><div class="ai-enhance-control"><button class="btn btn-primary btn-small" data-action="ai-enhance-observations" ${state.aiStatus?.policy?.allowed?'':'disabled'} title="${esc(state.aiStatus?.policy?.reason || 'AI status unavailable')}">AI Enhance</button>${(()=>{const aiStatus=aiEnhancementReviewStatus(section.id);return `<small class="ai-enhance-status ${aiStatus.className}" data-ai-enhance-status="${section.id}">Status: ${esc(aiStatus.label)}</small>`;})()}</div><button class="btn btn-ghost btn-small" data-action="section-version-history">Version history</button>${canOwn(report.access_scope)?'<button class="btn btn-danger btn-small" data-action="remove-section">Remove</button>':''}</div></div>
       <p class="help">This is the single editable record of current operations for this area. Quick Entry notes are added here under their selected subheading (Observation, Pain Point, Risk, Gap, Strength, or Opportunity). You can freely add to, reorganize, or edit the complete narrative.</p>
       <div class="field"><label for="section-narrative">Current Operations Narrative</label><textarea id="section-narrative" class="editor" data-section-id="${section.id}" placeholder="Capture or refine current operations. Quick Entry adds typed notes here automatically. Autosaves after you stop typing.">${esc(section.narrative)}</textarea><div id="narrative-save" class="save-state"></div></div>
     </section>

@@ -13,7 +13,7 @@ def headers(me: dict) -> dict[str, str]:
     return {"X-CSRF-Token": me["csrf_token"]}
 
 
-def create_report(client, me, name: str = "v0.8.9 AI Wording") -> tuple[str, dict]:
+def create_report(client, me, name: str = "v0.8.10 AI Wording") -> tuple[str, dict]:
     h = headers(me)
     prospect = client.post(
         "/api/prospects",
@@ -81,7 +81,7 @@ def test_v084_version_migration_and_frontend_contract() -> None:
     migration = (ROOT / "alembic" / "versions" / "i49f2a8d6b99_ai_wording_persistence.py").read_text(encoding="utf-8")
     app_js = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.9"' in config
+    assert 'app_version: str = "0.8.10"' in config
     assert 'down_revision = "h38e1f7c5a88"' in migration
     assert 'batch.add_column(sa.Column("source_fingerprint"' in migration
     assert 'batch.add_column(sa.Column("base_ai_text"' in migration

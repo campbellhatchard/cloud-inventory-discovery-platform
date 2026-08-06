@@ -17,6 +17,6 @@ def test_logo_assets_match_background_context() -> None:
     assert light_name in index_html
     assert light_name in service_worker
     assert dark_name in service_worker
-    assert "ci-discovery-v0.8.9" in service_worker
+    assert "ci-discovery-v0.8.10" in service_worker
     assert (ROOT / "app" / "static" / light_name).is_file()
     assert (ROOT / "app" / "static" / dark_name).is_file()

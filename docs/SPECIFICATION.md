@@ -2210,3 +2210,8 @@ The v0.8.9 build must preserve all v0.8.8 authentication, user lifecycle, eviden
 
 The detailed contract is maintained in `docs/UNIFIED_CURRENT_OPERATIONS_SPEC_v0.8.9.md`.
 
+
+
+# 36. Controlled Enhancement Delta — AI Enhancement Status v0.8.10
+
+Each operational report section must display a compact status immediately beneath the section-level AI Enhance button. The only user-facing values are **Not Run**, **Not Reviewed**, and **Accepted**. Status must be derived from persisted `OBSERVATION_ENHANCEMENT` suggestions for the section, ordered newest first. A latest `APPROVED` suggestion displays Accepted; any other latest suggestion displays Not Reviewed; no suggestions displays Not Run. The status must update when a generated suggestion becomes available and after acceptance without requiring the user to navigate to the AI Assistance inspector. No database schema change is required.

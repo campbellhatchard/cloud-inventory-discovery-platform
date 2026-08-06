@@ -67,9 +67,9 @@ def test_v087_version_and_contract() -> None:
     app_js = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
     api = (ROOT / "app" / "api.py").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.9"' in config
-    assert 'version = "0.8.9"' in pyproject
-    assert "ci-discovery-v0.8.9" in sw
+    assert 'app_version: str = "0.8.10"' in config
+    assert 'version = "0.8.10"' in pyproject
+    assert "ci-discovery-v0.8.10" in sw
     assert 'down_revision = "k61h4c0f8d21"' in migration
     assert "SET status = 'INACTIVE' WHERE status = 'DELETED'" in migration
     assert 'router.put("/admin/users/{user_id}/roles"' in api

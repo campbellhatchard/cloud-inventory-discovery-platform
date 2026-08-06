@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.9
-**Status:** Unified Current Operations Narrative consolidates typed Quick Entry notes and manual narrative editing into one canonical section; staging validation required
+**Version:** 0.8.10
+**Status:** Compact AI enhancement review status is visible beneath each section-level AI Enhance button; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented

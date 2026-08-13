@@ -80,7 +80,7 @@ def test_v083_fast_text_history_is_retained_but_photo_lane_is_retired() -> None:
     worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
     ai_service = (ROOT / "app" / "ai_service.py").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.10"' in config
+    assert 'app_version: str = "0.8.11"' in config
     assert 'down_revision = "g27d0e6b4f77"' in historical_migration
     assert '"fast-text": ("FAST_TEXT",)' in worker
     assert '"publication": ("PUBLICATION",)' in worker

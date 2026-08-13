@@ -17,7 +17,6 @@ from .models import (
     CapabilityMapping,
     Comment,
     DemoPlanVersion,
-    DemoSectionPriority,
     Job,
     KnowledgeEntry,
     Publication,
@@ -77,7 +76,6 @@ def calculate_report_readiness(db: Session, report: Report) -> dict[str, Any]:
     )
     mappings = list(db.scalars(select(CapabilityMapping).where(CapabilityMapping.report_id == report.id)).all())
     benefits = list(db.scalars(select(Benefit).where(Benefit.report_id == report.id)).all())
-    priorities = list(db.scalars(select(DemoSectionPriority).where(DemoSectionPriority.report_id == report.id)).all())
     demo_plan = db.scalar(
         select(DemoPlanVersion)
         .where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))
@@ -96,16 +94,12 @@ def calculate_report_readiness(db: Session, report: Report) -> dict[str, Any]:
     pending_mappings = Counter(item.section_id for item in mappings if item.section_id and item.approval_state == "PENDING")
     approved_benefits = Counter(item.section_id for item in benefits if item.section_id and item.approval_state == "APPROVED")
     pending_benefits = Counter(item.section_id for item in benefits if item.section_id and item.approval_state == "PENDING")
-    priority_by_section = {item.section_id: item for item in priorities}
 
     rows: list[dict[str, Any]] = []
     for section in sections:
         current_operations = bool(section.narrative.strip() or responses_by_section[section.id] or findings_by_section[section.id])
         operational = bool(section.process_module)
-        priority = priority_by_section.get(section.id)
-        demo_priority = priority.priority if priority else "OPTIONAL"
-        demo_required = demo_priority in {"MUST_SHOW", "SHOULD_SHOW"}
-        demo_covered = section.id in demo_section_ids or demo_priority == "DO_NOT_SHOW"
+        demo_covered = section.id in demo_section_ids
         approach_present = section.id in approach_by_section and bool(approach_by_section[section.id].text.strip())
         mapping_count = approved_mappings[section.id]
         benefit_count = approved_benefits[section.id]
@@ -117,7 +111,7 @@ def calculate_report_readiness(db: Session, report: Report) -> dict[str, Any]:
             status = "MISSING"
         elif review_required:
             status = "REVIEW_REQUIRED"
-        elif approach_present and mapping_count and benefit_count and (not demo_required or demo_covered):
+        elif approach_present and mapping_count and benefit_count:
             status = "READY"
         else:
             status = "PARTIAL"
@@ -131,8 +125,6 @@ def calculate_report_readiness(db: Session, report: Report) -> dict[str, Any]:
             missing.append("Approved functionality mapping")
         if operational and current_operations and not benefit_count:
             missing.append("Approved targeted benefit")
-        if operational and demo_required and not demo_covered:
-            missing.append("Accepted demo-plan coverage")
 
         rows.append(
             {
@@ -147,7 +139,6 @@ def calculate_report_readiness(db: Session, report: Report) -> dict[str, Any]:
                 "pending_mapping_count": pending_mappings[section.id],
                 "approved_benefit_count": benefit_count,
                 "pending_benefit_count": pending_benefits[section.id],
-                "demo_priority": demo_priority,
                 "demo_covered": demo_covered,
                 "missing": missing,
             }

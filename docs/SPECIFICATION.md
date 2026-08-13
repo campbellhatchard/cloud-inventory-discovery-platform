@@ -2215,3 +2215,34 @@ The detailed contract is maintained in `docs/UNIFIED_CURRENT_OPERATIONS_SPEC_v0.
 # 36. Controlled Enhancement Delta — AI Enhancement Status v0.8.10
 
 Each operational report section must display a compact status immediately beneath the section-level AI Enhance button. The only user-facing values are **Not Run**, **Not Reviewed**, and **Accepted**. Status must be derived from persisted `OBSERVATION_ENHANCEMENT` suggestions for the section, ordered newest first. A latest `APPROVED` suggestion displays Accepted; any other latest suggestion displays Not Reviewed; no suggestions displays Not Run. The status must update when a generated suggestion becomes available and after acceptance without requiring the user to navigate to the AI Assistance inspector. No database schema change is required.
+
+# 37. Controlled Enhancement Delta — Section Page Simplification v0.8.11
+
+| Attribute | Value |
+| --- | --- |
+| Software version | `0.8.11` |
+| Locked baseline | v0.8.10 at `999e6c870d54fad1ea872c4959f0433abeae8796` |
+| Development branch | `feature/section-page-simplification-v0.8.11` |
+| Migration | None; Alembic head remains `n94k7f3i1g54` |
+
+## 37.1 Discovery Questions
+
+Operational section pages shall not display discovery questions by default and shall not provide per-question response, photo, or save controls. A transient **Discovery Questions** button may reveal the configured question wording as a read-only list. The revealed/hidden state shall not persist across navigation; navigating to another report screen and returning must show the questions closed.
+
+## 37.2 Demo Priority retirement
+
+Per-section Demo Priority shall no longer be displayed or collected. Historical rows remain retained for audit/backward compatibility but shall not influence active demo-plan generation, report-quality inputs, or readiness requirements. Report-level demo audience, duration, and additional guidance remain supported.
+
+## 37.3 Functional mapping display
+
+Dedicated Approved Functionality Mapping displays shall be removed from operational pages. Governed mapping records and mapping-driven AI, benefits, traceability, review queues, document output, and demo orchestration remain available internally.
+
+## 37.4 AI History
+
+The persistent AI Assistance inspector shall be removed. A transient **AI History** button shall reveal recent section-level AI activity, generated content, review status, and permitted review actions. AI History shall reset closed when the user navigates to another report screen. The compact AI Enhance status beneath the AI Enhance button remains always visible.
+
+## 37.5 Data retention and verification
+
+No schema migration is required. Existing Response, DemoSectionPriority, CapabilityMapping, AiSuggestion, and audit records remain stored. v0.8.11 must preserve all v0.8.10 authentication, unified narrative, AI status, evidence, solution intelligence, benefits, reporting, and collaboration behavior while passing transient-panel, no-entry-question, Demo Priority isolation, mapping-display removal, and AI History tests.
+
+The detailed contract is maintained in `docs/SECTION_PAGE_SIMPLIFICATION_SPEC_v0.8.11.md`.

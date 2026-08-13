@@ -203,4 +203,4 @@ def test_v089_migration_contract() -> None:
     assert "NARRATIVE_DERIVED" in migration
     assert "report_sections SET narrative" in migration
     assert 'source_type: Mapped[str] = mapped_column(String(30), default="LEGACY")' in models
-    assert 'app_version: str = "0.8.10"' in config
+    assert 'app_version: str = "0.8.11"' in config

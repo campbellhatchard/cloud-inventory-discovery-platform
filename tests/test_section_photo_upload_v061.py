@@ -57,7 +57,8 @@ def test_section_photo_upload_frontend_contract() -> None:
     assert "upload.append('placement','INLINE')" in app_js
     assert "upload.append('classification','CONFIDENTIAL')" in app_js
     assert "queueEvidence({reportId,sectionId:targetSection.id" in app_js
-    assert "Add photo to this section" in app_js
+    assert "Add photo to this section" not in app_js
+    assert "Responses are no longer entered or collected" in app_js
     assert "Add photographs" in app_js
 
 

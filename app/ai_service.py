@@ -21,7 +21,6 @@ from .models import (
     CapabilityMapping,
     DemoPlanSettings,
     DemoPlanVersion,
-    DemoSectionPriority,
     EvidenceItem,
     Finding,
     KnowledgeEntry,
@@ -1321,10 +1320,6 @@ def run_targeted_benefits(
 
 def build_demo_plan_snapshot(db: Session, report: Report) -> dict[str, Any]:
     settings = db.get(DemoPlanSettings, report.id)
-    priority_rows = list(
-        db.scalars(select(DemoSectionPriority).where(DemoSectionPriority.report_id == report.id)).all()
-    )
-    priorities = {item.section_id: item for item in priority_rows}
     sections = list(
         db.scalars(
             select(ReportSection)
@@ -1335,7 +1330,6 @@ def build_demo_plan_snapshot(db: Session, report: Report) -> dict[str, Any]:
     section_packets: list[dict[str, Any]] = []
     all_refs: list[dict[str, Any]] = []
     for section in sections:
-        priority = priorities.get(section.id)
         solution = db.scalar(
             select(SectionContentVersion)
             .where(
@@ -1422,10 +1416,6 @@ def build_demo_plan_snapshot(db: Session, report: Report) -> dict[str, Any]:
             "process_module": section.process_module,
             "display_order": section.display_order,
             "section_version": section.version,
-            "priority": priority.priority if priority else "OPTIONAL",
-            "user_notes": priority.user_notes if priority else "",
-            "constraints": priority.constraints if priority else "",
-            "estimated_minutes": priority.estimated_minutes if priority else None,
             "operational_sources": operational,
             "solution": solution_payload,
             "approved_mappings": mapping_payload,
@@ -1469,7 +1459,6 @@ def _normalize_demo_plan(value: Any, snapshot: dict[str, Any]) -> tuple[dict[str
         for mapping in section.get("approved_mappings") or []:
             mapping_to_section[str(mapping.get("id"))] = str(section["id"])
     flow: list[dict[str, Any]] = []
-    included_sections: set[str] = set()
     for index, item in enumerate(raw.get("flow") or raw.get("demo_flow") or []):
         if not isinstance(item, dict):
             errors.append(f"Demo flow item {index + 1} was not an object.")
@@ -1479,9 +1468,6 @@ def _normalize_demo_plan(value: Any, snapshot: dict[str, Any]) -> tuple[dict[str
         if not section:
             errors.append(f"Demo flow item {index + 1} references an unknown section.")
             continue
-        if section.get("priority") == "DO_NOT_SHOW":
-            errors.append(f"Demo flow item {index + 1} includes a section marked DO NOT SHOW.")
-            continue
         mapping_ids = [str(value) for value in item.get("capability_mapping_ids") or []]
         mapping_ids = [value for value in mapping_ids if mapping_to_section.get(value) == section_id]
         if not mapping_ids:
@@ -1489,12 +1475,10 @@ def _normalize_demo_plan(value: Any, snapshot: dict[str, Any]) -> tuple[dict[str
         source_refs = [str(ref) for ref in item.get("source_refs") or [] if str(ref) in allowed_refs]
         if not source_refs:
             errors.append(f"Demo flow item {index + 1} has no valid source references.")
-        included_sections.add(section_id)
         flow.append({
             "sequence": len(flow) + 1,
             "section_id": section_id,
             "operational_area": str(item.get("operational_area") or section.get("title") or "").strip(),
-            "priority": section.get("priority") or "OPTIONAL",
             "functionality": str(item.get("functionality") or "").strip(),
             "scenario": str(item.get("scenario") or "").strip(),
             "customer_context": str(item.get("customer_context") or "").strip(),
@@ -1507,11 +1491,8 @@ def _normalize_demo_plan(value: Any, snapshot: dict[str, Any]) -> tuple[dict[str
             "questions": [str(value).strip() for value in item.get("questions") or [] if str(value).strip()],
             "capability_mapping_ids": mapping_ids,
             "source_refs": source_refs,
-            "estimated_minutes": item.get("estimated_minutes") or section.get("estimated_minutes"),
+            "estimated_minutes": item.get("estimated_minutes"),
         })
-    for section in sections.values():
-        if section.get("priority") == "MUST_SHOW" and str(section["id"]) not in included_sections:
-            errors.append(f"Must-show operational area '{section.get('title')}' is missing from the demo flow.")
     if not flow:
         errors.append("No valid demo flow items were generated.")
     objectives = [str(value).strip() for value in raw.get("objectives") or [] if str(value).strip()]
@@ -1531,8 +1512,8 @@ def _normalize_demo_plan(value: Any, snapshot: dict[str, Any]) -> tuple[dict[str
 
 def _verify_demo_plan(settings: Settings, snapshot: dict[str, Any], plan: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     system = (
-        "You verify an internal Cloud Inventory demonstration plan. Use only the supplied accepted current-state content, approved capability mappings, approved benefits, and user-entered demo priorities. "
-        "Block invented product behavior, unsupported outcomes, guarantees, numeric value claims, ignored MUST_SHOW priorities, included DO_NOT_SHOW areas, or demo steps that are not supported by an approved mapping. "
+        "You verify an internal Cloud Inventory demonstration plan. Use only the supplied accepted current-state content, approved capability mappings, approved benefits, and report-level demo settings. "
+        "Block invented product behavior, unsupported outcomes, guarantees, numeric value claims, or demo steps that are not supported by an approved mapping. "
         "Return only JSON with verification_status (PASSED or BLOCKED) and unsupported_claims."
     )
     result, usage = _call_json(
@@ -1555,7 +1536,7 @@ def run_demo_plan(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     eligible = [
         section for section in snapshot.get("sections") or []
-        if section.get("priority") != "DO_NOT_SHOW" and section.get("approved_mappings")
+        if section.get("approved_mappings")
     ]
     if not eligible:
         raise ValueError("Approve at least one capability mapping before generating a demo plan.")
@@ -1565,8 +1546,8 @@ def run_demo_plan(
     usage_items: list[dict[str, Any]] = []
     system = (
         "You are a senior Cloud Inventory presales consultant creating an internal, customer-specific demonstration plan. "
-        "Use only the supplied accepted discovery content, approved capability mappings, approved benefits, user-entered priorities, constraints, audience, and duration. "
-        "MUST_SHOW items must be included. DO_NOT_SHOW items must be excluded. Sequence the flow logically and fit the available time. "
+        "Use only the supplied accepted discovery content, approved capability mappings, approved benefits, report-level guidance, audience, and duration. "
+        "Sequence the flow logically and fit the available time. "
         "Each demo item must reference an approved capability mapping and source evidence. Value statements must be contextual and qualitative unless an approved quantitative benefit explicitly supports the number. "
         "Identify functionality not confirmed, dependencies, unresolved questions, and claims the presenter should avoid. "
         "Return only JSON with title, audience, duration_minutes, objectives, flow, risks_to_avoid, open_questions, and preparation_notes. "
@@ -1595,7 +1576,7 @@ def run_demo_plan(
         ]
     if verification["verification_status"] == "BLOCKED":
         repair_system = (
-            "Repair the demonstration plan using only the same source packet. Include every MUST_SHOW area, exclude every DO_NOT_SHOW area, remove unsupported claims, and reference approved mappings. "
+            "Repair the demonstration plan using only the same source packet. Remove unsupported claims and reference approved mappings. "
             "Return only the complete JSON demo plan using the original schema."
         )
         repaired, repair_usage = _call_json(
@@ -1647,7 +1628,6 @@ def build_report_quality_snapshot(db: Session, report: Report) -> dict[str, Any]
             .order_by(ReportSection.display_order)
         ).all()
     )
-    demo_priorities = {item.section_id: item for item in db.scalars(select(DemoSectionPriority).where(DemoSectionPriority.report_id == report.id)).all()}
     demo_plan = db.scalar(
         select(DemoPlanVersion)
         .where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))
@@ -1726,7 +1706,6 @@ def build_report_quality_snapshot(db: Session, report: Report) -> dict[str, Any]
             allowed_refs.append({"ref": ref, "label": benefit.statement})
         for source in sources:
             allowed_refs.append({"ref": source["ref"], "label": source["label"]})
-        priority = demo_priorities.get(section.id)
         section_payload.append({
             "id": section.id,
             "title": section.title,
@@ -1735,9 +1714,6 @@ def build_report_quality_snapshot(db: Session, report: Report) -> dict[str, Any]
             "sources": sources,
             "mappings": mapping_payload,
             "benefits": benefit_payload,
-            "demo_priority": priority.priority if priority else "OPTIONAL",
-            "demo_user_notes": priority.user_notes if priority else "",
-            "demo_constraints": priority.constraints if priority else "",
             "demo_covered": section.id in demo_section_ids,
         })
     summary = db.scalar(select(ReportContentVersion).where(ReportContentVersion.report_id == report.id, ReportContentVersion.content_type == "EXECUTIVE_SUMMARY", ReportContentVersion.is_current.is_(True)).order_by(ReportContentVersion.version.desc()))

@@ -607,3 +607,10 @@ tr:last-child td { border-bottom: 0; }
 .ai-enhance-status { font-size:10.5px; line-height:1.15; font-weight:600; color:var(--muted); white-space:nowrap; }
 .ai-enhance-status.ai-status-not-reviewed { color:#8a6200; }
 .ai-enhance-status.ai-status-accepted { color:#26734d; }
+
+/* v0.8.11 section-page simplification */
+.transient-section-panel { margin-top: 0; }
+.discovery-question-reference { padding: 12px 14px; }
+.discovery-question-reference .prompt-question { margin: 0; }
+.ai-history-list { display: grid; gap: 12px; }
+.ai-history-text { white-space: normal; }

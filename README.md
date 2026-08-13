@@ -6,8 +6,8 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.8.10
-**Status:** Compact AI enhancement review status is visible beneath each section-level AI Enhance button; staging validation required
+**Version:** 0.8.11
+**Status:** Operational section pages are simplified with on-demand read-only Discovery Questions and AI History; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
@@ -36,10 +36,13 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Source-aware Cloud Inventory Approach generation using approved capabilities, approved configuration intelligence, and approved historical knowledge
 - Governed Cloud Inventory configuration knowledge derived from controlled Guided Setup sources without adding discovery questions
 - Current Operations Narrative is the single user-facing operational-note record; typed Quick Entry classifications are synchronized internally for AI, readiness, mapping, and benefits
-- Optional discovery questions and sections; only populated sections require review before final publication
+- Section-page AI History is hidden by default and revealed on demand; both AI History and Discovery Questions reset closed whenever the user navigates to another report screen
+- Per-section Demo Priority collection/display is retired; historical rows remain stored but no longer influence active demo-plan generation or readiness
+- Approved functionality mappings remain governed internally but are no longer rendered as a dedicated section-page display
+- Discovery Questions are optional read-only reference lists revealed on demand; operational answers are captured in Current Operations Narrative/Quick Entry rather than per-question fields
 - Stable left-navigation position while moving between report sections
 - Standard and custom report sections
-- Guided questions plus one editable Current Operations Narrative per operational area
+- One editable Current Operations Narrative per operational area, with Discovery Questions hidden by default and available as a read-only reference list
 - Quick Entry field-capture screen appends typed Observation/Pain Point/Risk/Gap/Strength/Opportunity notes directly into the destination Current Operations Narrative
 - Native-camera and attachment capture, image normalization, optional captions, automatic section placement, and text extraction
 - Narrative-derived operational classifications, baseline metrics, approved capability mappings, qualitative and measurable benefits
@@ -48,7 +51,7 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 - Draft/final validation and publication workflow
 - Denver-styled DOCX and PDF generation with configurable branding and draft watermarking
 - Full Discovery Report, Solution Demonstration Brief, and Customer Follow-up Questionnaire outputs
-- Content-driven report readiness dashboard across current operations, solution approach, approved mappings, benefits, and demo coverage
+- Content-driven report readiness dashboard across current operations, solution approach, approved mappings, and benefits
 - Whole-report AI quality review for completeness, consistency, traceability, unsupported claims, duplication, and follow-up gaps
 - Version-controlled manual and AI-assisted executive summary with factual verification
 - Visible report source and claim traceability classifications

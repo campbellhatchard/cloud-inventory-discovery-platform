@@ -465,7 +465,7 @@ def test_frontend_contains_targeted_benefit_and_demo_orchestration_contract():
     app_js = (root / "app" / "static" / "app.js").read_text(encoding="utf-8")
     assert 'id="targeted-benefits"' in app_js
     assert 'data-action="generate-targeted-benefits"' in app_js
-    assert 'id="section-demo-priority-form"' in app_js
+    assert 'id="section-demo-priority-form"' not in app_js
     assert 'id="demo-settings-form"' in app_js
     assert 'data-action="generate-demo-plan"' in app_js
     assert "Add selected benefits for review" in app_js

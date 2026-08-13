@@ -42,9 +42,9 @@ def test_release_version_is_v0810_without_new_migration():
     config = (root / "app/config.py").read_text(encoding="utf-8")
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     sw = (root / "app/static/sw.js").read_text(encoding="utf-8")
-    assert 'app_version: str = "0.8.10"' in config
-    assert 'version = "0.8.10"' in pyproject
-    assert "ci-discovery-v0.8.10" in sw
+    assert 'app_version: str = "0.8.11"' in config
+    assert 'version = "0.8.11"' in pyproject
+    assert "ci-discovery-v0.8.11" in sw
     migrations = list((root / "alembic/versions").glob("*.py"))
     assert any("n94k7f3i1g54" in p.name for p in migrations)
     assert not any("v0810" in p.name.lower() or "ai_enhancement_status" in p.name.lower() for p in migrations)

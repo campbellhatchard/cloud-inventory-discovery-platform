@@ -114,12 +114,12 @@ def test_legacy_demo_priority_rows_do_not_feed_new_demo_snapshot(admin_session):
     assert "estimated_minutes" not in packet
 
 
-def test_release_version_is_v0811_without_schema_change():
+def test_v0811_simplification_is_retained_in_v090_without_schema_change():
     root = _root()
     config = (root / "app/config.py").read_text(encoding="utf-8")
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     sw = (root / "app/static/sw.js").read_text(encoding="utf-8")
-    assert 'app_version: str = "0.8.11"' in config
-    assert 'version = "0.8.11"' in pyproject
-    assert "ci-discovery-v0.8.11" in sw
+    assert 'app_version: str = "0.9.0"' in config
+    assert 'version = "0.9.0"' in pyproject
+    assert "ci-discovery-v0.9.0" in sw
     assert any("n94k7f3i1g54" in p.name for p in (root / "alembic/versions").glob("*.py"))

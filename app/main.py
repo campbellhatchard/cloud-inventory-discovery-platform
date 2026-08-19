@@ -11,7 +11,11 @@ from sqlalchemy import text
 
 from .api import router
 from .config import get_settings
-from .database import Base, engine
+from .database import Base, SessionLocal, engine
+from .enhancement_fast_api import router as fast_enhancement_router
+from .enhancement_photo_api import router as photo_enhancement_router
+from .enhancement_photo_review_api import router as photo_review_router
+from .v090_upgrade import apply_v090_data_upgrade
 
 settings = get_settings()
 
@@ -21,6 +25,10 @@ async def lifespan(application: FastAPI):
     # Render runs Alembic in preDeploy. create_all keeps local development zero-friction.
     if settings.environment in {"development", "test"}:
         Base.metadata.create_all(bind=engine)
+    # v0.9.0: preserve existing General Operational Observations content while
+    # exposing it as the real "Other" page beneath Manufacturing.
+    with SessionLocal() as db:
+        apply_v090_data_upgrade(db)
     yield
 
 
@@ -32,6 +40,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(router)
+app.include_router(fast_enhancement_router)
+app.include_router(photo_enhancement_router)
+app.include_router(photo_review_router)
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

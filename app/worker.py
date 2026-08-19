@@ -10,15 +10,23 @@ from collections.abc import Iterable
 from .ai_service import process_ai_job
 from .config import Settings, get_settings
 from .database import SessionLocal
+from .enhancement_service import (
+    process_fast_wording_job,
+    process_observation_verification_job,
+    process_photo_analysis_job,
+    process_photo_revision_job,
+)
 from .jobs import claim_next, complete, fail
 from .maintenance import run_maintenance
-from .models import WorkerHeartbeat, utcnow
+from .models import AiJob, WorkerHeartbeat, utcnow
 from .publication_service import process_publication
 from .storage import storage_configuration_status
 
 
 LANES: dict[str, tuple[str, ...]] = {
     "fast-text": ("FAST_TEXT",),
+    "ai-verification": ("AI_VERIFICATION",),
+    "photo-ai": ("PHOTO_AI",),
     "general-ai": ("GENERAL_AI", "STANDARD"),
     "publication": ("PUBLICATION",),
 }
@@ -33,6 +41,8 @@ def _touch_heartbeat(settings: Settings, *, status: str = "RUNNING", details: di
             "pid": os.getpid(),
             "ai_enabled": settings.ai_enabled,
             "ai_model": settings.openai_model,
+            "fast_text_model": settings.openai_fast_text_model or settings.openai_model,
+            "analysis_model": settings.openai_analysis_model or settings.openai_model,
             "confidential_ai_enabled": settings.ai_confidential_content_enabled,
             "data_control_mode": settings.openai_data_control_mode,
             "queue_lanes": sorted(LANES),
@@ -74,11 +84,32 @@ def run_once(
                 process_publication(db, job.payload["publication_id"], settings)
             elif job.job_type == "ai.generate":
                 process_ai_job(db, job.payload["ai_job_id"], settings)
+            elif job.job_type == "ai.fast-wording":
+                process_fast_wording_job(db, job.payload["ai_job_id"], settings)
+            elif job.job_type == "ai.verify-observation":
+                process_observation_verification_job(
+                    db,
+                    job.payload["ai_job_id"],
+                    job.payload["suggestion_id"],
+                    settings,
+                )
+            elif job.job_type == "ai.photo-analyze":
+                process_photo_analysis_job(db, job.payload["ai_job_id"], settings)
+            elif job.job_type == "ai.photo-revision":
+                process_photo_revision_job(db, job.payload["ai_job_id"], settings)
             else:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             complete(db, job)
         except Exception as exc:
             traceback.print_exc()
+            if job.job_type.startswith("ai.") and job.job_type != "ai.generate" and job.attempts >= job.max_attempts:
+                ai_job_id = str((job.payload or {}).get("ai_job_id") or "")
+                ai_job = db.get(AiJob, ai_job_id) if ai_job_id else None
+                if ai_job and ai_job.status not in {"COMPLETED", "BLOCKED"}:
+                    ai_job.status = "FAILED"
+                    ai_job.error = str(exc)[:10000]
+                    ai_job.completed_at = utcnow()
+                    db.commit()
             fail(db, job, str(exc))
         return True
 

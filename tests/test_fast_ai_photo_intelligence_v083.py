@@ -74,19 +74,21 @@ def restore_ai(settings, old) -> None:
     ) = old
 
 
-def test_v083_fast_text_history_is_retained_but_photo_lane_is_retired() -> None:
+def test_v090_preserves_historical_migration_and_separates_ai_lanes() -> None:
     config = (ROOT / "app" / "config.py").read_text(encoding="utf-8")
     historical_migration = (ROOT / "alembic" / "versions" / "h38e1f7c5a88_ai_latency_photo_intelligence.py").read_text(encoding="utf-8")
     worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
-    ai_service = (ROOT / "app" / "ai_service.py").read_text(encoding="utf-8")
+    photo_service = (ROOT / "app" / "photo_ai_service.py").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.9"' in config
+    assert 'app_version: str = "0.9.0"' in config
     assert 'down_revision = "g27d0e6b4f77"' in historical_migration
     assert '"fast-text": ("FAST_TEXT",)' in worker
+    assert '"ai-verification": ("AI_VERIFICATION",)' in worker
+    assert '"photo-ai": ("PHOTO_AI",)' in worker
     assert '"publication": ("PUBLICATION",)' in worker
-    assert "PHOTO_ANALYSIS" not in worker
-    assert "PHOTO_CONTEXT_REVISION" not in ai_service
-    assert "input_image" not in ai_service
+    assert "input_image" in photo_service
+    assert "max_retries" in photo_service
+    assert "openai_request_timeout_seconds" in config
 
 
 def test_job_queue_claims_only_requested_lane_and_lowest_priority_first() -> None:
@@ -95,17 +97,17 @@ def test_job_queue_claims_only_requested_lane_and_lowest_priority_first() -> Non
     from app.models import Job
 
     with SessionLocal() as db:
-        later = enqueue(db, "test.v083", {"name": "later"}, queue_name="TEST_FAST_TEXT_V083", priority=50)
-        other = enqueue(db, "test.v083", {"name": "other"}, queue_name="GENERAL_AI", priority=1)
-        first = enqueue(db, "test.v083", {"name": "first"}, queue_name="TEST_FAST_TEXT_V083", priority=10)
+        later = enqueue(db, "test.v090", {"name": "later"}, queue_name="TEST_FAST_TEXT_V090", priority=50)
+        other = enqueue(db, "test.v090", {"name": "other"}, queue_name="GENERAL_AI", priority=1)
+        first = enqueue(db, "test.v090", {"name": "first"}, queue_name="TEST_FAST_TEXT_V090", priority=10)
         ids = [later.id, other.id, first.id]
         db.commit()
 
     with SessionLocal() as db:
-        claimed = claim_next(db, "test-worker", queue_names=("TEST_FAST_TEXT_V083",))
+        claimed = claim_next(db, "test-worker", queue_names=("TEST_FAST_TEXT_V090",))
         assert claimed is not None
         assert claimed.id == first.id
-        assert claimed.queue_name == "TEST_FAST_TEXT_V083"
+        assert claimed.queue_name == "TEST_FAST_TEXT_V090"
 
     with SessionLocal() as db:
         rows = list(db.scalars(select(Job).where(Job.id.in_(ids))).all())
@@ -114,13 +116,13 @@ def test_job_queue_claims_only_requested_lane_and_lowest_priority_first() -> Non
         db.commit()
 
 
-def test_text_enhancement_remains_photo_free_and_uses_fast_text_lane(admin_session) -> None:
+def test_fast_wording_is_photo_free_and_uses_dedicated_lane(admin_session) -> None:
     from app.database import SessionLocal
     from app.models import AiJob, Job
 
     client, me = admin_session
     h = headers(me)
-    report_id, payload = create_report(client, me, "Fast Text v086")
+    report_id, payload = create_report(client, me, "Fast Text v090")
     section = next(item for item in payload["sections"] if item["process_module"] == "PICKING")
     saved = client.patch(
         f"/api/reports/{report_id}/sections/{section['id']}",
@@ -132,8 +134,8 @@ def test_text_enhancement_remains_photo_free_and_uses_fast_text_lane(admin_sessi
     settings, old = enable_ai_for_test()
     try:
         requested = client.post(
-            f"/api/reports/{report_id}/ai",
-            json={"section_id": section["id"], "purpose": "OBSERVATION_ENHANCEMENT", "evidence_ids": []},
+            f"/api/reports/{report_id}/ai-fast-wording",
+            json={"section_id": section["id"], "evidence_ids": []},
             headers=h,
         )
         assert requested.status_code == 202, requested.text
@@ -144,15 +146,26 @@ def test_text_enhancement_remains_photo_free_and_uses_fast_text_lane(admin_sessi
             assert ai_job is not None
             assert ai_job.context_snapshot["selected_evidence_ids"] == []
             assert queue_job is not None
+            assert queue_job.job_type == "ai.fast-wording"
             assert queue_job.queue_name == "FAST_TEXT"
-            assert queue_job.priority == 10
+            assert queue_job.priority == 5
 
         rejected = client.post(
-            f"/api/reports/{report_id}/ai",
-            json={"section_id": section["id"], "purpose": "OBSERVATION_ENHANCEMENT", "evidence_ids": ["photo-id"]},
+            f"/api/reports/{report_id}/ai-fast-wording",
+            json={"section_id": section["id"], "evidence_ids": ["photo-id"]},
             headers=h,
         )
         assert rejected.status_code == 400
-        assert "never sent to AI" in rejected.json()["detail"]
+        assert "Photo Intelligence is a separate workflow" in rejected.json()["detail"]
     finally:
         restore_ai(settings, old)
+
+
+def test_v090_quick_entry_master_data_and_other_navigation_contract() -> None:
+    script = (ROOT / "app" / "static" / "enhancements-v0.9.0.js").read_text(encoding="utf-8")
+    upgrade = (ROOT / "app" / "v090_upgrade.py").read_text(encoding="utf-8")
+
+    assert 'value: "MASTER_DATA", label: "Master Data"' in script
+    assert 'stable_key === "master-data"' in script
+    assert 'stable_key === "general-observations"' in script
+    assert '.values(title="Other", display_order=255)' in upgrade

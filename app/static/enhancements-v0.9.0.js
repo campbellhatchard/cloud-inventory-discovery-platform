@@ -178,7 +178,7 @@
             </div>
           </div>
         </div>
-        ${noRevision ? '<div class="validation-item INFO"><strong>No wording change recommended.</strong><p>The photo analysis did not provide sufficiently supported additional information to justify changing the narrative.</p></div>' : `
+        ${noRevision ? '<div class="validation-item INFO"><strong>No wording change recommended.</strong><p>The photo analysis did not provide sufficiently supported additional information to justify changing the narrative. Mark this result reviewed to complete the Photo Intelligence workflow without changing the narrative.</p></div>' : `
           <div class="ai-comparison-grid">
             <section class="ai-comparison-panel">
               <div class="ai-panel-title"><h3>Current narrative</h3><span class="badge">Written context</span></div>
@@ -193,7 +193,7 @@
         ${additions.length ? `<div class="ai-trace"><strong>Photo-supported additions</strong><ul>${additions.map(item => `<li>${esc(typeof item === "string" ? item : JSON.stringify(item))}</li>`).join("")}</ul></div>` : ""}
         ${questions.length ? `<div class="ai-trace"><strong>Conflicts / questions</strong><ul>${questions.map(item => `<li>${esc(typeof item === "string" ? item : JSON.stringify(item))}</li>`).join("")}</ul></div>` : ""}
         ${unsupported.length ? `<div class="validation-item ERROR"><strong>Unsupported wording detected.</strong><ul>${unsupported.map(item => `<li>${esc(item.text || JSON.stringify(item))}${item.reason ? ` — ${esc(item.reason)}` : ""}</li>`).join("")}</ul></div>` : ""}
-        ${pending && !noRevision ? `<div class="card-actions"><button class="btn btn-primary" type="button" data-v090-action="review-photo-revision" data-decision="APPROVED" data-suggestion-id="${esc(suggestion.id)}" ${passed ? "" : "disabled"}>Accept Revision</button><button class="btn btn-danger" type="button" data-v090-action="review-photo-revision" data-decision="REJECTED" data-suggestion-id="${esc(suggestion.id)}">Reject</button></div>` : ""}
+        ${pending ? `<div class="card-actions">${noRevision ? `<button class="btn btn-primary" type="button" data-v090-action="review-photo-revision" data-decision="REJECTED" data-no-revision="true" data-suggestion-id="${esc(suggestion.id)}">Mark Reviewed</button>` : `<button class="btn btn-primary" type="button" data-v090-action="review-photo-revision" data-decision="APPROVED" data-suggestion-id="${esc(suggestion.id)}" ${passed ? "" : "disabled"}>Accept Revision</button><button class="btn btn-danger" type="button" data-v090-action="review-photo-revision" data-decision="REJECTED" data-suggestion-id="${esc(suggestion.id)}">Reject</button>`}</div>` : ""}
       </section>`;
   }
 
@@ -275,15 +275,16 @@
       if (action === "review-photo-revision") {
         const decision = target.dataset.decision;
         const suggestionId = target.dataset.suggestionId;
+        const noRevision = target.dataset.noRevision === "true";
         let note = null;
-        if (decision === "REJECTED") {
+        if (decision === "REJECTED" && !noRevision) {
           note = window.prompt("Optional reason for rejecting this photo-supported revision:", "") || null;
         }
         await api(`/api/reports/${reportId}/sections/${section.id}/photo-intelligence/revisions/${suggestionId}/review`, {
           method: "POST",
           body: {decision, note},
         }, false);
-        toast(decision === "APPROVED" ? "Photo-supported narrative revision accepted." : "Photo-supported revision rejected.", "success");
+        toast(noRevision ? "Photo Intelligence review completed." : (decision === "APPROVED" ? "Photo-supported narrative revision accepted." : "Photo-supported revision rejected."), "success");
         await renderReport(reportId, section.id);
       }
     } catch (error) {

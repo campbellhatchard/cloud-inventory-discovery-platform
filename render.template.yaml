@@ -26,7 +26,7 @@ projects:
               - key: APP_COMPONENT
                 value: web
               - key: APP_VERSION
-                value: "0.8.11"
+                value: "0.9.0"
               - key: APP_BASE_URL
                 fromService:
                   type: web
@@ -62,6 +62,14 @@ projects:
                 sync: false
               - key: OPENAI_MODEL
                 value: gpt-5-mini
+              - key: OPENAI_FAST_TEXT_MODEL
+                value: gpt-5-mini
+              - key: OPENAI_ANALYSIS_MODEL
+                value: gpt-5-mini
+              - key: OPENAI_REQUEST_TIMEOUT_SECONDS
+                value: "30"
+              - key: OPENAI_PHOTO_REQUEST_TIMEOUT_SECONDS
+                value: "60"
               - key: AI_ENABLED
                 sync: false
               - key: AI_CONFIDENTIAL_CONTENT_ENABLED
@@ -96,7 +104,7 @@ projects:
               - key: APP_COMPONENT
                 value: worker
               - key: APP_VERSION
-                value: "0.8.11"
+                value: "0.9.0"
               - key: DATABASE_URL
                 fromDatabase:
                   name: __DATABASE_NAME__
@@ -119,6 +127,14 @@ projects:
                 sync: false
               - key: OPENAI_MODEL
                 value: gpt-5-mini
+              - key: OPENAI_FAST_TEXT_MODEL
+                value: gpt-5-mini
+              - key: OPENAI_ANALYSIS_MODEL
+                value: gpt-5-mini
+              - key: OPENAI_REQUEST_TIMEOUT_SECONDS
+                value: "30"
+              - key: OPENAI_PHOTO_REQUEST_TIMEOUT_SECONDS
+                value: "60"
               - key: AI_ENABLED
                 sync: false
               - key: AI_CONFIDENTIAL_CONTENT_ENABLED

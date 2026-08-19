@@ -10,12 +10,8 @@ from collections.abc import Iterable
 from .ai_service import process_ai_job
 from .config import Settings, get_settings
 from .database import SessionLocal
-from .enhancement_service import (
-    process_fast_wording_job,
-    process_observation_verification_job,
-    process_photo_analysis_job,
-    process_photo_revision_job,
-)
+from .fast_ai_service import process_fast_wording_job, process_observation_verification_job
+from .photo_ai_service import process_photo_analysis_job, process_photo_revision_job
 from .jobs import claim_next, complete, fail
 from .maintenance import run_maintenance
 from .models import AiJob, WorkerHeartbeat, utcnow

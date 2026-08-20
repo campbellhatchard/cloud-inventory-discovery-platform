@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Iterable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,41 +9,20 @@ from sqlalchemy.orm import Session
 from .models import Job, utcnow
 
 
-def enqueue(
-    db: Session,
-    job_type: str,
-    payload: dict[str, Any],
-    *,
-    max_attempts: int = 5,
-    queue_name: str = "STANDARD",
-    priority: int = 100,
-) -> Job:
-    job = Job(
-        job_type=job_type,
-        queue_name=queue_name,
-        priority=priority,
-        payload=payload,
-        max_attempts=max_attempts,
-    )
+def enqueue(db: Session, job_type: str, payload: dict[str, Any], *, max_attempts: int = 5) -> Job:
+    job = Job(job_type=job_type, payload=payload, max_attempts=max_attempts)
     db.add(job)
     db.flush()
     return job
 
 
-def claim_next(
-    db: Session,
-    worker_id: str,
-    *,
-    queue_names: Iterable[str] | None = None,
-) -> Job | None:
-    stmt = select(Job).where(Job.status == "QUEUED", Job.available_at <= utcnow())
-    if queue_names is not None:
-        names = tuple(dict.fromkeys(str(value) for value in queue_names if value))
-        if not names:
-            db.rollback()
-            return None
-        stmt = stmt.where(Job.queue_name.in_(names))
-    stmt = stmt.order_by(Job.priority.asc(), Job.created_at.asc()).limit(1)
+def claim_next(db: Session, worker_id: str) -> Job | None:
+    stmt = (
+        select(Job)
+        .where(Job.status == "QUEUED", Job.available_at <= utcnow())
+        .order_by(Job.created_at)
+        .limit(1)
+    )
     if db.bind and db.bind.dialect.name == "postgresql":
         stmt = stmt.with_for_update(skip_locked=True)
     job = db.scalar(stmt)

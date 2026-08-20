@@ -17,7 +17,7 @@ projects:
             dockerfilePath: ./Dockerfile
             dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
             healthCheckPath: /readyz
-            preDeployCommand: /bin/sh scripts/render-predeploy.sh
+            preDeployCommand: alembic upgrade head && python -m app.seed
             envVars:
               - key: ENVIRONMENT
                 value: production
@@ -26,7 +26,7 @@ projects:
               - key: APP_COMPONENT
                 value: web
               - key: APP_VERSION
-                value: "0.9.0"
+                value: "0.2.0"
               - key: APP_BASE_URL
                 fromService:
                   type: web
@@ -42,8 +42,6 @@ projects:
                 sync: false
               - key: BOOTSTRAP_ADMIN_EMAIL
                 sync: false
-              - key: DEFAULT_USER_TEMP_PASSWORD
-                sync: false
               - key: STORAGE_MODE
                 value: s3
               - key: S3_ENDPOINT
@@ -56,26 +54,14 @@ projects:
                 sync: false
               - key: S3_SECRET_ACCESS_KEY
                 sync: false
-              - key: OPENAI_API_KEY
-                sync: false
-              - key: OPENAI_PROJECT_ID
-                sync: false
               - key: OPENAI_MODEL
                 value: gpt-5-mini
-              - key: OPENAI_FAST_TEXT_MODEL
-                value: gpt-5-mini
-              - key: OPENAI_ANALYSIS_MODEL
-                value: gpt-5-mini
-              - key: OPENAI_REQUEST_TIMEOUT_SECONDS
-                value: "30"
-              - key: OPENAI_PHOTO_REQUEST_TIMEOUT_SECONDS
-                value: "60"
               - key: AI_ENABLED
-                sync: false
+                value: "false"
               - key: AI_CONFIDENTIAL_CONTENT_ENABLED
-                sync: false
+                value: "false"
               - key: OPENAI_DATA_CONTROL_MODE
-                sync: false
+                value: standard-disabled-for-confidential
               - key: LIBREOFFICE_PATH
                 value: /usr/bin/libreoffice
               - key: DEFAULT_RETENTION_DAYS
@@ -104,7 +90,7 @@ projects:
               - key: APP_COMPONENT
                 value: worker
               - key: APP_VERSION
-                value: "0.9.0"
+                value: "0.2.0"
               - key: DATABASE_URL
                 fromDatabase:
                   name: __DATABASE_NAME__
@@ -121,26 +107,14 @@ projects:
                 sync: false
               - key: S3_SECRET_ACCESS_KEY
                 sync: false
-              - key: OPENAI_API_KEY
-                sync: false
-              - key: OPENAI_PROJECT_ID
-                sync: false
               - key: OPENAI_MODEL
                 value: gpt-5-mini
-              - key: OPENAI_FAST_TEXT_MODEL
-                value: gpt-5-mini
-              - key: OPENAI_ANALYSIS_MODEL
-                value: gpt-5-mini
-              - key: OPENAI_REQUEST_TIMEOUT_SECONDS
-                value: "30"
-              - key: OPENAI_PHOTO_REQUEST_TIMEOUT_SECONDS
-                value: "60"
               - key: AI_ENABLED
-                sync: false
+                value: "false"
               - key: AI_CONFIDENTIAL_CONTENT_ENABLED
-                sync: false
+                value: "false"
               - key: OPENAI_DATA_CONTROL_MODE
-                sync: false
+                value: standard-disabled-for-confidential
               - key: LIBREOFFICE_PATH
                 value: /usr/bin/libreoffice
               - key: MERGE_SOURCE_RECOVERY_DAYS

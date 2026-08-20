@@ -17,7 +17,6 @@ os.environ["STORAGE_MODE"] = "local"
 os.environ["BOOTSTRAP_ADMIN_USERNAME"] = "Admin"
 os.environ["BOOTSTRAP_ADMIN_PASSWORD"] = "Test-Initial-Password!2026"
 os.environ["BOOTSTRAP_ADMIN_EMAIL"] = "admin@test.invalid"
-os.environ["DEFAULT_USER_TEMP_PASSWORD"] = "Test-Temporary1!"
 os.environ["AI_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402

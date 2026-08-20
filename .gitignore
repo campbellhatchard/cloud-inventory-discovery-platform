@@ -16,4 +16,3 @@ local-storage/*
 deployment-output/
 deploy.secrets*.env
 render.generated*.yaml
-tests/.runtime/

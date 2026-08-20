@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .database import get_db
 from .models import User, UserRole, UserSession, utcnow
-from .usernames import normalize_username
 
 
 
@@ -76,7 +75,7 @@ def clear_session_cookie(response: Response, settings: Settings) -> None:
 
 
 def authenticate(db: Session, username: str, password: str) -> User | None:
-    user = db.scalar(select(User).where(User.username_key == normalize_username(username)))
+    user = db.scalar(select(User).where(User.username == username))
     if not user or user.status != "ACTIVE":
         return None
     now = utcnow()

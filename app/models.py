@@ -27,7 +27,6 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
     username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    username_key: Mapped[str] = mapped_column(String(500), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(Text)
     display_name: Mapped[str | None] = mapped_column(String(200))
@@ -66,7 +65,6 @@ class Prospect(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(30), default="ACTIVE")
     retention_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     legal_hold: Mapped[bool] = mapped_column(Boolean, default=False)
-    logo_storage_key: Mapped[str | None] = mapped_column(Text)
     archive_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
@@ -128,11 +126,6 @@ class BrandingProfile(Base, TimestampMixin):
     confidentiality_text: Mapped[str] = mapped_column(Text)
     draft_watermark: Mapped[str] = mapped_column(String(100), default="DRAFT - CONFIDENTIAL")
     footer_text: Mapped[str] = mapped_column(String(500), default="Cloud Inventory | Confidential")
-    photo_size_uom: Mapped[str] = mapped_column(String(12), default="INCHES")
-    landscape_photo_width: Mapped[float] = mapped_column(Float, default=6.5)
-    landscape_photo_height: Mapped[float] = mapped_column(Float, default=4.25)
-    portrait_photo_width: Mapped[float] = mapped_column(Float, default=4.25)
-    portrait_photo_height: Mapped[float] = mapped_column(Float, default=6.5)
     logo_storage_key: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
@@ -196,22 +189,6 @@ class Report(Base, TimestampMixin):
     recovery_delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class ReportContentVersion(Base):
-    __tablename__ = "report_content_versions"
-    __table_args__ = (UniqueConstraint("report_id", "content_type", "version"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
-    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
-    content_type: Mapped[str] = mapped_column(String(50), default="EXECUTIVE_SUMMARY")
-    version: Mapped[int] = mapped_column(Integer)
-    text: Mapped[str] = mapped_column(Text, default="")
-    source_type: Mapped[str] = mapped_column(String(30), default="USER")
-    source_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    ai_suggestion_id: Mapped[str | None] = mapped_column(ForeignKey("ai_suggestions.id", ondelete="SET NULL"))
-    is_current: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
 class ReportMember(Base):
     __tablename__ = "report_members"
     report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True)
@@ -230,7 +207,7 @@ class ReportSection(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(250))
     process_module: Mapped[str | None] = mapped_column(String(100), index=True)
     display_order: Mapped[int] = mapped_column(Integer)
-    state: Mapped[str] = mapped_column(String(40), default="ACTIVE")
+    state: Mapped[str] = mapped_column(String(40), default="NOT_STARTED")
     required_on_final: Mapped[bool] = mapped_column(Boolean, default=False)
     removed_reason: Mapped[str | None] = mapped_column(Text)
     narrative: Mapped[str] = mapped_column(Text, default="")
@@ -238,23 +215,6 @@ class ReportSection(Base, TimestampMixin):
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     updated_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     assigned_to_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
-
-
-class SectionContentVersion(Base):
-    __tablename__ = "section_content_versions"
-    __table_args__ = (UniqueConstraint("section_id", "content_type", "version"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
-    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
-    section_id: Mapped[str] = mapped_column(ForeignKey("report_sections.id", ondelete="CASCADE"), index=True)
-    content_type: Mapped[str] = mapped_column(String(50), default="CURRENT_OPERATIONS")
-    version: Mapped[int] = mapped_column(Integer)
-    text: Mapped[str] = mapped_column(Text, default="")
-    source_type: Mapped[str] = mapped_column(String(30), default="USER")
-    source_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    ai_suggestion_id: Mapped[str | None] = mapped_column(ForeignKey("ai_suggestions.id", ondelete="SET NULL"))
-    is_current: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Response(Base, TimestampMixin):
@@ -283,7 +243,6 @@ class Finding(Base, TimestampMixin):
     impact: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[str] = mapped_column(String(20), default="MEDIUM")
     status: Mapped[str] = mapped_column(String(20), default="DRAFT")
-    source_type: Mapped[str] = mapped_column(String(30), default="LEGACY")
     client_mutation_id: Mapped[str | None] = mapped_column(String(36))
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
 
@@ -349,10 +308,6 @@ class Capability(Base, TimestampMixin):
     limitations: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default="PROPOSED")
     source: Mapped[str | None] = mapped_column(Text)
-    product_version: Mapped[str | None] = mapped_column(String(100))
-    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     version: Mapped[int] = mapped_column(Integer, default=1)
 
 
@@ -361,18 +316,12 @@ class CapabilityMapping(Base):
     __table_args__ = (UniqueConstraint("finding_id", "capability_id"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
     report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
-    section_id: Mapped[str | None] = mapped_column(ForeignKey("report_sections.id", ondelete="SET NULL"), index=True)
-    finding_id: Mapped[str | None] = mapped_column(ForeignKey("findings.id", ondelete="CASCADE"), nullable=True)
-    source_ref: Mapped[str | None] = mapped_column(String(120), index=True)
-    source_type: Mapped[str] = mapped_column(String(40), default="FINDING")
-    source_label: Mapped[str | None] = mapped_column(String(300))
-    source_statement: Mapped[str | None] = mapped_column(Text)
+    finding_id: Mapped[str] = mapped_column(ForeignKey("findings.id", ondelete="CASCADE"))
     capability_id: Mapped[str] = mapped_column(ForeignKey("capabilities.id"))
     rationale: Mapped[str] = mapped_column(Text)
     prerequisites: Mapped[str | None] = mapped_column(Text)
     approval_state: Mapped[str] = mapped_column(String(20), default="PENDING")
     approved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
-    ai_suggestion_id: Mapped[str | None] = mapped_column(ForeignKey("ai_suggestions.id", ondelete="SET NULL"), index=True)
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -381,61 +330,13 @@ class Benefit(Base):
     __tablename__ = "benefits"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
     report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
-    section_id: Mapped[str | None] = mapped_column(ForeignKey("report_sections.id", ondelete="SET NULL"), index=True)
     finding_id: Mapped[str | None] = mapped_column(ForeignKey("findings.id", ondelete="SET NULL"))
     capability_mapping_id: Mapped[str | None] = mapped_column(ForeignKey("capability_mappings.id", ondelete="SET NULL"))
-    source_ref: Mapped[str | None] = mapped_column(String(160), index=True)
-    source_type: Mapped[str] = mapped_column(String(40), default="MANUAL")
-    source_label: Mapped[str | None] = mapped_column(String(300))
-    source_statement: Mapped[str | None] = mapped_column(Text)
     statement: Mapped[str] = mapped_column(Text)
-    category: Mapped[str] = mapped_column(String(60), default="OPERATIONAL_EFFICIENCY")
     measure_type: Mapped[str] = mapped_column(String(30), default="QUALITATIVE")
     formula: Mapped[str | None] = mapped_column(Text)
     assumptions: Mapped[str | None] = mapped_column(Text)
-    confidence: Mapped[str] = mapped_column(String(20), default="MEDIUM")
     approval_state: Mapped[str] = mapped_column(String(20), default="PENDING")
-    approved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    ai_suggestion_id: Mapped[str | None] = mapped_column(ForeignKey("ai_suggestions.id", ondelete="SET NULL"), index=True)
-    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class DemoPlanSettings(Base, TimestampMixin):
-    __tablename__ = "demo_plan_settings"
-    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True)
-    audience: Mapped[str] = mapped_column(Text, default="")
-    duration_minutes: Mapped[int] = mapped_column(Integer, default=45)
-    additional_priorities: Mapped[str] = mapped_column(Text, default="")
-    version: Mapped[int] = mapped_column(Integer, default=1)
-    updated_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
-
-
-class DemoSectionPriority(Base, TimestampMixin):
-    __tablename__ = "demo_section_priorities"
-    __table_args__ = (UniqueConstraint("report_id", "section_id"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
-    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
-    section_id: Mapped[str] = mapped_column(ForeignKey("report_sections.id", ondelete="CASCADE"), index=True)
-    priority: Mapped[str] = mapped_column(String(30), default="OPTIONAL")
-    user_notes: Mapped[str] = mapped_column(Text, default="")
-    constraints: Mapped[str] = mapped_column(Text, default="")
-    estimated_minutes: Mapped[int | None] = mapped_column(Integer)
-    version: Mapped[int] = mapped_column(Integer, default=1)
-    updated_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
-
-
-class DemoPlanVersion(Base):
-    __tablename__ = "demo_plan_versions"
-    __table_args__ = (UniqueConstraint("report_id", "version"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
-    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
-    version: Mapped[int] = mapped_column(Integer)
-    content: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    source_type: Mapped[str] = mapped_column(String(30), default="AI_ACCEPTED")
-    source_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    ai_suggestion_id: Mapped[str | None] = mapped_column(ForeignKey("ai_suggestions.id", ondelete="SET NULL"), index=True)
-    is_current: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -445,9 +346,6 @@ class KnowledgeEntry(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
     source_type: Mapped[str] = mapped_column(String(50), index=True)
     source_ref: Mapped[str | None] = mapped_column(Text)
-    source_version: Mapped[str | None] = mapped_column(String(100), index=True)
-    knowledge_kind: Mapped[str] = mapped_column(String(50), default="GENERAL", index=True)
-    structured_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     title: Mapped[str] = mapped_column(String(250))
     process_module: Mapped[str | None] = mapped_column(String(100), index=True)
     content: Mapped[str] = mapped_column(Text)
@@ -457,10 +355,6 @@ class KnowledgeEntry(Base, TimestampMixin):
     reusable_across_prospects: Mapped[bool] = mapped_column(Boolean, default=False)
     approval_state: Mapped[str] = mapped_column(String(20), default="PENDING")
     approved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
-    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
 
@@ -473,9 +367,6 @@ class AiJob(Base):
     instructions: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(100))
     policy_decision: Mapped[dict[str, Any]] = mapped_column(JSON)
-    context_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    parent_suggestion_id: Mapped[str | None] = mapped_column(String(36), index=True)
-    source_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(20), default="QUEUED")
     token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error: Mapped[str | None] = mapped_column(Text)
@@ -495,11 +386,6 @@ class AiSuggestion(Base):
     source_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     confidence: Mapped[str] = mapped_column(String(20), default="MEDIUM")
     review_state: Mapped[str] = mapped_column(String(20), default="PENDING")
-    source_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
-    parent_suggestion_id: Mapped[str | None] = mapped_column(String(36), index=True)
-    base_ai_text: Mapped[str | None] = mapped_column(Text)
-    refinement_instruction: Mapped[str | None] = mapped_column(Text)
-    superseded_by_suggestion_id: Mapped[str | None] = mapped_column(String(36), index=True)
     reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     review_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -584,8 +470,6 @@ class Publication(Base):
     requested_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    dismissed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
 
 class AuditEvent(Base):
@@ -601,22 +485,10 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
-class WorkerHeartbeat(Base):
-    __tablename__ = "worker_heartbeats"
-    component: Mapped[str] = mapped_column(String(50), primary_key=True)
-    app_version: Mapped[str] = mapped_column(String(50))
-    status: Mapped[str] = mapped_column(String(30), default="RUNNING")
-    storage_configured: Mapped[bool] = mapped_column(Boolean, default=False)
-    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
 class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
     job_type: Mapped[str] = mapped_column(String(100), index=True)
-    queue_name: Mapped[str] = mapped_column(String(30), default="STANDARD", index=True)
-    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(20), default="QUEUED", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)

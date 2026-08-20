@@ -37,14 +37,14 @@ def test_status_is_compact_secondary_text():
     assert "font-size:10.5px" in css
 
 
-def test_release_version_is_v0810_without_new_migration():
+def test_release_version_is_v090_without_new_status_migration():
     root = _root()
     config = (root / "app/config.py").read_text(encoding="utf-8")
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     sw = (root / "app/static/sw.js").read_text(encoding="utf-8")
-    assert 'app_version: str = "0.8.11"' in config
-    assert 'version = "0.8.11"' in pyproject
-    assert "ci-discovery-v0.8.11" in sw
+    assert 'app_version: str = "0.9.0"' in config
+    assert 'version = "0.9.0"' in pyproject
+    assert "ci-discovery-v0.9.0" in sw
     migrations = list((root / "alembic/versions").glob("*.py"))
     assert any("n94k7f3i1g54" in p.name for p in migrations)
     assert not any("v0810" in p.name.lower() or "ai_enhancement_status" in p.name.lower() for p in migrations)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -9,7 +10,9 @@ from pathlib import Path
 from typing import Iterable
 
 from docx import Document
+from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
@@ -19,24 +22,36 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import Settings
+from .current_operations import parse_current_operations_narrative
 from .models import (
     Benefit,
     BrandingProfile,
     Capability,
     CapabilityMapping,
+    DemoPlanSettings,
+    DemoPlanVersion,
     Engagement,
     EvidenceItem,
     FileObject,
-    Finding,
     PromptDefinition,
     Prospect,
     Report,
+    ReportContentVersion,
     ReportSection,
     Response,
+    SectionContentVersion,
     Site,
     User,
 )
-from .storage import ObjectStorage
+from .storage import ObjectStorage, StorageConfigurationError
+
+
+DEFAULT_PROPRIETARY_FOOTER = (
+    "This document is the property of and proprietary to Cloud Inventory and contains trade secret and "
+    "confidential information, and is solely for the Customer's internal use. Without the express written "
+    "consent of Cloud Inventory, this document shall not be used, reproduced, copied, disclosed, or transmitted, "
+    "in whole or in part. Copyright Cloud Inventory. All rights reserved."
+)
 
 
 def _hex_color(value: str) -> RGBColor:
@@ -58,10 +73,12 @@ def _set_repeat_table_header(row) -> None:
     tr_pr.append(tbl_header)
 
 
-def _add_field(paragraph, instruction: str, placeholder: str = "") -> None:
+def _add_field(paragraph, instruction: str, placeholder: str = "", *, dirty: bool = False) -> None:
     run = paragraph.add_run()
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
+    if dirty:
+        begin.set(qn("w:dirty"), "true")
     instr = OxmlElement("w:instrText")
     instr.set(qn("xml:space"), "preserve")
     instr.text = instruction
@@ -74,14 +91,22 @@ def _add_field(paragraph, instruction: str, placeholder: str = "") -> None:
     run._r.extend([begin, instr, separate, text, end])
 
 
+def _request_field_updates(doc: Document) -> None:
+    settings = doc.settings._element
+    existing = settings.find(qn("w:updateFields"))
+    if existing is None:
+        existing = OxmlElement("w:updateFields")
+        settings.append(existing)
+    existing.set(qn("w:val"), "true")
+
+
 def _add_page_number(paragraph) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     paragraph.add_run("Page ")
     _add_field(paragraph, "PAGE", "1")
 
 
-def _add_watermark(section, text: str) -> None:
-    header = section.header
+def _add_watermark_to_header(header, text: str) -> None:
     paragraph = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     shape_id = "PowerPlusWaterMarkObject"
@@ -121,6 +146,22 @@ def _configure_styles(doc: Document, brand: BrandingProfile) -> None:
         style.paragraph_format.keep_with_next = True
         style.paragraph_format.space_before = Pt(12)
         style.paragraph_format.space_after = Pt(6)
+    # Keep list markers visually subordinate to body text and clearly indented.
+    for list_style_name in ("List Bullet", "List Number"):
+        list_style = styles[list_style_name]
+        list_style.font.name = brand.body_font
+        list_style.font.size = Pt(10)
+        list_style.paragraph_format.left_indent = Inches(0.35)
+        list_style.paragraph_format.first_line_indent = Inches(-0.18)
+        list_style.paragraph_format.space_after = Pt(3)
+
+    toc_heading = styles["TOC Heading"]
+    toc_heading.font.name = brand.heading_font
+    toc_heading.font.size = Pt(18)
+    toc_heading.font.bold = True
+    toc_heading.font.color.rgb = _hex_color(brand.primary_color)
+    toc_heading.paragraph_format.space_after = Pt(12)
+
     if "Evidence Caption" not in [s.name for s in styles]:
         cap = styles.add_style("Evidence Caption", WD_STYLE_TYPE.PARAGRAPH)
         cap.font.name = brand.body_font
@@ -129,20 +170,96 @@ def _configure_styles(doc: Document, brand: BrandingProfile) -> None:
         cap.font.color.rgb = _hex_color(brand.accent_color)
 
 
-def _apply_headers_footers(doc: Document, brand: BrandingProfile, is_final: bool) -> None:
-    for section in doc.sections:
-        section.top_margin = Inches(0.7)
-        section.bottom_margin = Inches(0.7)
-        section.left_margin = Inches(0.75)
-        section.right_margin = Inches(0.75)
-        footer = section.footer
-        p = footer.paragraphs[0]
-        p.text = brand.footer_text + "  |  "
-        p.style = doc.styles["Normal"]
-        p.runs[0].font.size = Pt(8)
-        _add_page_number(p)
+def _configure_section_layout(section) -> None:
+    section.top_margin = Inches(0.7)
+    # Reserve enough body clearance for the legal footer on content pages.
+    section.bottom_margin = Inches(0.95)
+    section.left_margin = Inches(0.75)
+    section.right_margin = Inches(0.75)
+    section.footer_distance = Inches(0.22)
+
+
+def _clear_footer(footer) -> None:
+    for table in list(footer.tables):
+        footer._element.remove(table._element)
+    for paragraph in footer.paragraphs:
+        paragraph.clear()
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(0)
+
+
+def _add_content_footer(section, brand: BrandingProfile, footer_logo_path: Path | None) -> None:
+    footer = section.footer
+    footer.is_linked_to_previous = False
+    _clear_footer(footer)
+
+    table = footer.add_table(rows=1, cols=3, width=Inches(7.0))
+    table.autofit = False
+    widths = (Inches(0.82), Inches(5.48), Inches(0.70))
+    for column, width in zip(table.columns, widths):
+        column.width = width
+    for cell, width in zip(table.rows[0].cells, widths):
+        cell.width = width
+        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+    # Set explicit OOXML grid widths so LibreOffice preserves the asymmetric
+    # footer layout while refreshing the TOC field.
+    grid_cols = table._tbl.tblGrid.gridCol_lst
+    for grid_col, width in zip(grid_cols, widths):
+        grid_col.set(qn("w:w"), str(int(width.twips)))
+
+    logo_cell, text_cell, page_cell = table.rows[0].cells
+    logo_p = logo_cell.paragraphs[0]
+    logo_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    logo_p.paragraph_format.space_after = Pt(0)
+    if footer_logo_path and footer_logo_path.exists():
+        logo_p.add_run().add_picture(str(footer_logo_path), width=Inches(0.68))
+
+    legal_p = text_cell.paragraphs[0]
+    legal_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    legal_p.paragraph_format.space_after = Pt(0)
+    legal_run = legal_p.add_run(brand.footer_text or DEFAULT_PROPRIETARY_FOOTER)
+    legal_run.font.name = brand.body_font
+    legal_run.font.size = Pt(5.5)
+    legal_run.font.color.rgb = RGBColor(70, 78, 86)
+
+    page_p = page_cell.paragraphs[0]
+    page_p.paragraph_format.space_after = Pt(0)
+    _add_page_number(page_p)
+    for run in page_p.runs:
+        run.font.name = brand.body_font
+        run.font.size = Pt(7)
+
+
+def _apply_headers_footers(
+    doc: Document,
+    brand: BrandingProfile,
+    is_final: bool,
+    footer_logo_path: Path | None,
+) -> None:
+    if not doc.sections:
+        return
+
+    # The cover occupies its own section so page 1 is structurally footer-free.
+    # This survives LibreOffice's TOC refresh, which can otherwise duplicate a
+    # default footer into a first-page footer even when w:titlePg is present.
+    cover_section = doc.sections[0]
+    _configure_section_layout(cover_section)
+    cover_section.footer.is_linked_to_previous = False
+    _clear_footer(cover_section.footer)
+    cover_section.first_page_footer.is_linked_to_previous = False
+    _clear_footer(cover_section.first_page_footer)
+
+    if not is_final:
+        cover_section.header.is_linked_to_previous = False
+        _add_watermark_to_header(cover_section.header, brand.draft_watermark)
+
+    for section in doc.sections[1:]:
+        _configure_section_layout(section)
+        _add_content_footer(section, brand, footer_logo_path)
         if not is_final:
-            _add_watermark(section, brand.draft_watermark)
+            section.header.is_linked_to_previous = False
+            _add_watermark_to_header(section.header, brand.draft_watermark)
 
 
 def _add_logo(doc: Document, logo_path: Path | None, width: float = 2.0) -> None:
@@ -152,7 +269,17 @@ def _add_logo(doc: Document, logo_path: Path | None, width: float = 2.0) -> None
         p.add_run().add_picture(str(logo_path), width=Inches(width))
 
 
-def _add_cover(doc: Document, report: Report, prospect: Prospect, site: Site | None, engagement: Engagement, brand: BrandingProfile, logo_path: Path | None, is_final: bool) -> None:
+def _add_cover(
+    doc: Document,
+    report: Report,
+    prospect: Prospect,
+    site: Site | None,
+    engagement: Engagement,
+    brand: BrandingProfile,
+    logo_path: Path | None,
+    prospect_logo_path: Path | None,
+    is_final: bool,
+) -> None:
     _add_logo(doc, logo_path, 2.3)
     doc.add_paragraph()
     title = doc.add_paragraph()
@@ -166,6 +293,14 @@ def _add_cover(doc: Document, report: Report, prospect: Prospect, site: Site | N
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle.add_run("Site Discovery Report").bold = True
     subtitle.runs[0].font.size = Pt(18)
+    prospect_name = doc.add_paragraph()
+    prospect_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    prospect_run = prospect_name.add_run(prospect.name)
+    prospect_run.bold = True
+    prospect_run.font.name = brand.heading_font
+    prospect_run.font.size = Pt(15)
+    if prospect_logo_path and prospect_logo_path.exists():
+        _add_logo(doc, prospect_logo_path, 1.55)
     doc.add_paragraph()
     info = doc.add_table(rows=4, cols=2)
     info.style = "Table Grid"
@@ -188,17 +323,20 @@ def _add_cover(doc: Document, report: Report, prospect: Prospect, site: Site | N
     for run in note.runs:
         run.font.size = Pt(8)
         run.font.italic = True
-    doc.add_page_break()
 
 
-def _add_toc(doc: Document, sections: list[ReportSection]) -> None:
-    doc.add_heading("Document Contents", level=1)
-    # A static, generated contents list renders reliably in both Word and headless PDF.
-    # Section titles are sourced directly from the report snapshot, so the list cannot drift
-    # from the generated body even when Word fields are not refreshed by the PDF renderer.
-    for index, section in enumerate(sections, start=1):
-        p = doc.add_paragraph(style="List Number")
-        p.add_run(section.title)
+
+def _add_toc(doc: Document) -> None:
+    # Word Automatic Table 2 equivalent: built-in TOC Heading plus a real TOC
+    # field using Heading 1-3, hyperlinks and page-number references.
+    doc.add_paragraph("Table of Contents", style="TOC Heading")
+    field_paragraph = doc.add_paragraph()
+    _add_field(
+        field_paragraph,
+        ' TOC \\o "1-3" \\h \\z \\u ',
+        "Table of Contents will update automatically.",
+        dirty=True,
+    )
     doc.add_page_break()
 
 
@@ -224,8 +362,26 @@ def _add_text(doc: Document, text: str) -> None:
     for block in [x.strip() for x in text.split("\n") if x.strip()]:
         if block.startswith(("- ", "• ", "* ")):
             doc.add_paragraph(block[2:].strip(), style="List Bullet")
-        else:
-            doc.add_paragraph(block)
+            continue
+        numbered = re.match(r"^\d+[\.)]\s+(.+)$", block)
+        if numbered:
+            doc.add_paragraph(numbered.group(1).strip(), style="List Number")
+            continue
+        doc.add_paragraph(block)
+
+
+def _add_current_operations_text(doc: Document, text: str) -> None:
+    entries = parse_current_operations_narrative(text)
+    if not entries:
+        return
+    for entry in entries:
+        heading = doc.add_paragraph()
+        heading.add_run(f"{entry.label}:").bold = True
+        _add_text(doc, entry.statement)
+        if entry.impact:
+            impact = doc.add_paragraph()
+            impact.add_run("Impact: ").bold = True
+            impact.add_run(entry.impact)
 
 
 def _image_bytes_to_file(data: bytes, suffix: str = ".jpg") -> Path:
@@ -236,10 +392,40 @@ def _image_bytes_to_file(data: bytes, suffix: str = ".jpg") -> Path:
     return p
 
 
-def _add_evidence(doc: Document, db: Session, storage: ObjectStorage, evidence: Iterable[EvidenceItem]) -> None:
+def _photo_dimensions_inches(brand: BrandingProfile, width: int, height: int) -> tuple[float, float]:
+    unit_factor = 1.0 if brand.photo_size_uom == "INCHES" else 1 / 2.54
+    if width >= height:
+        box_width = float(brand.landscape_photo_width) * unit_factor
+        box_height = float(brand.landscape_photo_height) * unit_factor
+    else:
+        box_width = float(brand.portrait_photo_width) * unit_factor
+        box_height = float(brand.portrait_photo_height) * unit_factor
+    box_width = min(max(box_width, 0.5), 6.7)
+    box_height = min(max(box_height, 0.5), 8.5)
+    image_ratio = width / height if height else 1.0
+    box_ratio = box_width / box_height if box_height else image_ratio
+    if image_ratio >= box_ratio:
+        output_width = box_width
+        output_height = box_width / image_ratio if image_ratio else box_height
+    else:
+        output_height = box_height
+        output_width = box_height * image_ratio
+    return max(output_width, 0.25), max(output_height, 0.25)
+
+
+def _add_evidence(
+    doc: Document,
+    db: Session,
+    storage: ObjectStorage | None,
+    evidence: Iterable[EvidenceItem],
+    brand: BrandingProfile,
+) -> None:
     for item in evidence:
         file_obj = db.scalar(select(FileObject).where(FileObject.evidence_id == item.id, FileObject.variant.in_(["WEB", "ORIGINAL"])).order_by(FileObject.variant.desc()))
         if not file_obj:
+            continue
+        if storage is None:
+            doc.add_paragraph(f"Evidence unavailable during generation: {file_obj.file_name} (persistent object storage is not configured)", style="Evidence Caption")
             continue
         try:
             data = storage.get_bytes(file_obj.storage_key)
@@ -249,11 +435,14 @@ def _add_evidence(doc: Document, db: Session, storage: ObjectStorage, evidence: 
                 try:
                     with Image.open(temp) as image:
                         width, height = image.size
-                    max_width = 6.7
-                    width_inches = min(max_width, max(2.5, max_width if width >= height else 4.2))
+                    width_inches, height_inches = _photo_dimensions_inches(brand, width, height)
                     p = doc.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.add_run().add_picture(str(temp), width=Inches(width_inches))
+                    p.add_run().add_picture(
+                        str(temp),
+                        width=Inches(width_inches),
+                        height=Inches(height_inches),
+                    )
                     cap = doc.add_paragraph(item.caption or file_obj.file_name, style="Evidence Caption")
                     cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 finally:
@@ -263,6 +452,97 @@ def _add_evidence(doc: Document, db: Session, storage: ObjectStorage, evidence: 
         except Exception as exc:
             doc.add_paragraph(f"Evidence unavailable during generation: {file_obj.file_name} ({exc})", style="Evidence Caption")
 
+
+
+
+def _add_demo_plan_document(doc: Document, plan: dict, settings: DemoPlanSettings | None) -> None:
+    doc.add_heading("Demo Objectives", level=1)
+    objectives = plan.get("objectives") or []
+    if objectives:
+        for objective in objectives:
+            doc.add_paragraph(str(objective), style="List Bullet")
+    else:
+        doc.add_paragraph("No accepted demo objectives have been recorded.")
+
+    doc.add_heading("Demo Context", level=1)
+    audience = str(plan.get("audience") or (settings.audience if settings else "") or "Not specified")
+    duration = int(plan.get("duration_minutes") or (settings.duration_minutes if settings else 45))
+    context_table = doc.add_table(rows=2, cols=2)
+    context_table.style = "Table Grid"
+    context_table.cell(0, 0).text = "Audience"
+    context_table.cell(0, 1).text = audience
+    context_table.cell(1, 0).text = "Planned duration"
+    context_table.cell(1, 1).text = f"{duration} minutes"
+    for row in context_table.rows:
+        row.cells[0].paragraphs[0].runs[0].bold = True
+
+    flow = list(plan.get("flow") or [])
+    doc.add_heading("Recommended Demo Flow", level=1)
+    if flow:
+        table = doc.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+        headers = ["Sequence", "Operational area", "Functionality", "Why it matters", "Time"]
+        for idx, value in enumerate(headers):
+            table.rows[0].cells[idx].text = value
+            table.rows[0].cells[idx].paragraphs[0].runs[0].bold = True
+        _set_repeat_table_header(table.rows[0])
+        for item in flow:
+            cells = table.add_row().cells
+            cells[0].text = str(item.get("sequence") or "")
+            cells[1].text = str(item.get("operational_area") or "")
+            cells[2].text = str(item.get("functionality") or "")
+            cells[3].text = str(item.get("value_statement") or item.get("customer_context") or "")
+            cells[4].text = f"{item.get('estimated_minutes')} min" if item.get("estimated_minutes") else ""
+    else:
+        doc.add_paragraph("No accepted demo flow is available.")
+
+    for item in flow:
+        sequence = item.get("sequence") or ""
+        area = item.get("operational_area") or "Operational area"
+        doc.add_heading(f"{sequence}. {area}", level=1)
+        if item.get("priority"):
+            p = doc.add_paragraph()
+            p.add_run("Priority: ").bold = True
+            p.add_run(str(item["priority"]).replace("_", " ").title())
+        for label, key in [
+            ("Customer operational context", "customer_context"),
+            ("Scenario", "scenario"),
+            ("Functionality to demonstrate", "functionality"),
+            ("Sample data required", "sample_data"),
+            ("User role", "user_role"),
+            ("Expected result", "expected_result"),
+            ("Contextual value statement", "value_statement"),
+        ]:
+            value = str(item.get(key) or "").strip()
+            if value:
+                doc.add_heading(label, level=2)
+                _add_text(doc, value)
+        for label, key in [
+            ("Demonstration steps", "steps"),
+            ("Presenter talking points", "talking_points"),
+            ("Questions to ask", "questions"),
+        ]:
+            values = [str(value).strip() for value in item.get(key) or [] if str(value).strip()]
+            if values:
+                doc.add_heading(label, level=2)
+                for value in values:
+                    doc.add_paragraph(value, style="List Number" if key == "steps" else "List Bullet")
+
+    risks = [str(value).strip() for value in plan.get("risks_to_avoid") or [] if str(value).strip()]
+    questions = [str(value).strip() for value in plan.get("open_questions") or [] if str(value).strip()]
+    preparation = [str(value).strip() for value in plan.get("preparation_notes") or [] if str(value).strip()]
+    if risks:
+        doc.add_heading("Claims and Risks to Avoid", level=1)
+        for value in risks:
+            doc.add_paragraph(value, style="List Bullet")
+    if questions:
+        doc.add_heading("Open Questions and Gaps", level=1)
+        for value in questions:
+            doc.add_paragraph(value, style="List Bullet")
+    if preparation:
+        doc.add_heading("Presales Preparation Notes", level=1)
+        for value in preparation:
+            doc.add_paragraph(value, style="List Bullet")
 
 def generate_docx(db: Session, report_id: str, settings: Settings, *, publication_type: str, is_final: bool) -> bytes:
     report = db.get(Report, report_id)
@@ -275,10 +555,19 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
     if not prospect or not engagement or not brand:
         raise ValueError("Report dependencies are incomplete")
     owner = db.get(User, report.owner_id)
-    storage = ObjectStorage(settings)
-    logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo.png"
+    storage: ObjectStorage | None = None
+    try:
+        storage = ObjectStorage(settings)
+    except StorageConfigurationError:
+        # Draft generation must remain available even when persistent R2 storage
+        # has not yet been configured. Stored evidence/custom branding is simply
+        # omitted with an explanatory note instead of aborting the document.
+        storage = None
+    cloud_inventory_logo_path = Path(__file__).parent / "static" / "cloud-inventory-logo-for-light-background-v0.4.1.png"
+    logo_path = cloud_inventory_logo_path
     custom_logo_path: Path | None = None
-    if brand.logo_storage_key:
+    prospect_logo_path: Path | None = None
+    if brand.logo_storage_key and storage is not None:
         try:
             fd, custom_name = tempfile.mkstemp(prefix="ci-discovery-logo-", suffix=".png")
             os.close(fd)
@@ -289,11 +578,25 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
             if custom_logo_path:
                 custom_logo_path.unlink(missing_ok=True)
             custom_logo_path = None
+    if prospect.logo_storage_key and storage is not None:
+        try:
+            fd, prospect_logo_name = tempfile.mkstemp(prefix="ci-discovery-prospect-logo-", suffix=".png")
+            os.close(fd)
+            prospect_logo_path = Path(prospect_logo_name)
+            prospect_logo_path.write_bytes(storage.get_bytes(prospect.logo_storage_key))
+        except Exception:
+            if prospect_logo_path:
+                prospect_logo_path.unlink(missing_ok=True)
+            prospect_logo_path = None
 
     doc = Document()
     _configure_styles(doc, brand)
-    _apply_headers_footers(doc, brand, is_final)
-    _add_cover(doc, report, prospect, site, engagement, brand, logo_path, is_final)
+    _request_field_updates(doc)
+    _add_cover(doc, report, prospect, site, engagement, brand, logo_path, prospect_logo_path, is_final)
+    # Start page 2 in a separate section so the footer is guaranteed to appear
+    # on every page after the cover, but never on page 1.
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    _apply_headers_footers(doc, brand, is_final, cloud_inventory_logo_path)
     _add_revision_history(doc, report, owner, brand)
 
     if publication_type == "FOLLOW_UP_QUESTIONNAIRE":
@@ -302,25 +605,57 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
         doc.add_heading("Solution Demonstration Brief", level=1)
 
     all_sections = list(db.scalars(select(ReportSection).where(ReportSection.report_id == report.id, ReportSection.state != "REMOVED").order_by(ReportSection.display_order)).all())
+    demo_settings = db.get(DemoPlanSettings, report.id)
+    demo_plan_version = db.scalar(
+        select(DemoPlanVersion)
+        .where(DemoPlanVersion.report_id == report.id, DemoPlanVersion.is_current.is_(True))
+        .order_by(DemoPlanVersion.version.desc())
+    )
 
     def has_publishable_content(section: ReportSection) -> bool:
         if section.narrative.strip():
             return True
         checks = [
             select(Response.id).where(Response.section_id == section.id).limit(1),
-            select(Finding.id).where(Finding.section_id == section.id, Finding.status != "REJECTED").limit(1),
             select(EvidenceItem.id).where(EvidenceItem.section_id == section.id, EvidenceItem.status.in_(["READY", "AVAILABLE"])).limit(1),
+            select(Benefit.id).where(
+                Benefit.section_id == section.id,
+                Benefit.approval_state == "APPROVED",
+            ).limit(1),
+            select(SectionContentVersion.id).where(
+                SectionContentVersion.section_id == section.id,
+                SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                SectionContentVersion.is_current.is_(True),
+            ).limit(1),
         ]
         return any(db.scalar(stmt) is not None for stmt in checks)
 
-    if publication_type == "FOLLOW_UP_QUESTIONNAIRE" or is_final:
+    if publication_type == "FOLLOW_UP_QUESTIONNAIRE":
         sections = all_sections
     elif publication_type == "DEMO_BRIEF":
         sections = [s for s in all_sections if has_publishable_content(s) or s.stable_key in {"executive-summary", "vision-pain-points", "solution-viability", "expected-benefits", "next-steps"}]
     else:
+        # Draft and final discovery documents include only sections that contain
+        # reportable content. Empty optional sections never create blank output.
         sections = [s for s in all_sections if has_publishable_content(s)]
 
-    _add_toc(doc, sections)
+    _add_toc(doc)
+    if publication_type == "FULL_DISCOVERY":
+        executive_summary = db.scalar(
+            select(ReportContentVersion)
+            .where(
+                ReportContentVersion.report_id == report.id,
+                ReportContentVersion.content_type == "EXECUTIVE_SUMMARY",
+                ReportContentVersion.is_current.is_(True),
+            )
+            .order_by(ReportContentVersion.version.desc())
+        )
+        if executive_summary and executive_summary.text.strip():
+            doc.add_heading("Executive Summary", level=1)
+            _add_text(doc, executive_summary.text)
+    if publication_type == "DEMO_BRIEF" and demo_plan_version and demo_plan_version.content:
+        _add_demo_plan_document(doc, demo_plan_version.content, demo_settings)
+        sections = []
     for section in sections:
         doc.add_heading(section.title, level=1)
         if publication_type == "FOLLOW_UP_QUESTIONNAIRE":
@@ -336,8 +671,8 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
             continue
 
         if section.narrative.strip():
-            _add_text(doc, section.narrative)
-        responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.section_id == section.id).order_by(PromptDefinition.display_order)).all()
+            _add_current_operations_text(doc, section.narrative)
+        responses = db.execute(select(Response, PromptDefinition).join(PromptDefinition, Response.prompt_id == PromptDefinition.id).where(Response.section_id == section.id, PromptDefinition.active.is_(True)).order_by(PromptDefinition.display_order)).all()
         if responses:
             doc.add_heading("Discovery Responses", level=2)
             for response, prompt in responses:
@@ -345,57 +680,125 @@ def generate_docx(db: Session, report_id: str, settings: Settings, *, publicatio
                 p.add_run(prompt.question).bold = True
                 _add_text(doc, response.narrative or (str(response.payload) if response.payload else "No narrative response recorded."))
 
-        findings = list(db.scalars(select(Finding).where(Finding.section_id == section.id, Finding.status != "REJECTED").order_by(Finding.created_at)).all())
-        if findings:
-            doc.add_heading("Current-State Findings", level=2)
-            for finding in findings:
-                p = doc.add_paragraph(style="List Bullet")
-                p.add_run(f"{finding.finding_type.replace('_', ' ').title()}: ").bold = True
-                p.add_run(finding.statement)
-                if finding.impact:
-                    doc.add_paragraph(f"Impact: {finding.impact}")
+        solution = db.scalar(
+            select(SectionContentVersion)
+            .where(
+                SectionContentVersion.report_id == report.id,
+                SectionContentVersion.section_id == section.id,
+                SectionContentVersion.content_type == "CLOUD_INVENTORY_APPROACH",
+                SectionContentVersion.is_current.is_(True),
+            )
+            .order_by(SectionContentVersion.version.desc())
+        )
+        if solution and solution.text.strip():
+            doc.add_heading("Cloud Inventory Approach", level=2)
+            _add_text(doc, solution.text)
 
         mappings = db.execute(
-            select(CapabilityMapping, Capability, Finding)
+            select(CapabilityMapping, Capability)
             .join(Capability, CapabilityMapping.capability_id == Capability.id)
-            .join(Finding, CapabilityMapping.finding_id == Finding.id)
-            .where(CapabilityMapping.report_id == report.id, Finding.section_id == section.id, CapabilityMapping.approval_state == "APPROVED")
+            .where(
+                CapabilityMapping.report_id == report.id,
+                CapabilityMapping.section_id == section.id,
+                CapabilityMapping.approval_state == "APPROVED",
+            )
+            .order_by(Capability.name)
         ).all()
         if mappings:
-            doc.add_heading("Cloud Inventory Functionality", level=2)
-            for mapping, capability, finding in mappings:
+            doc.add_heading("Mapped Cloud Inventory Functionality", level=3 if solution and solution.text.strip() else 2)
+            for mapping, capability in mappings:
                 p = doc.add_paragraph(style="List Bullet")
                 p.add_run(capability.name + ": ").bold = True
                 p.add_run(mapping.rationale)
+                if mapping.source_label and mapping.source_statement:
+                    source_p = doc.add_paragraph()
+                    source_p.add_run(f"Mapped from {mapping.source_label}: ").bold = True
+                    source_p.add_run(mapping.source_statement)
                 if mapping.prerequisites or capability.typical_prerequisites:
                     doc.add_paragraph("Prerequisites: " + (mapping.prerequisites or capability.typical_prerequisites or ""))
                 if capability.limitations:
                     doc.add_paragraph("Limitations: " + capability.limitations)
 
-        benefits = list(db.scalars(select(Benefit).join(Finding, Benefit.finding_id == Finding.id, isouter=True).where(Benefit.report_id == report.id, Benefit.approval_state == "APPROVED", (Finding.section_id == section.id) | (Benefit.finding_id.is_(None)))).all())
+        benefits = list(
+            db.scalars(
+                select(Benefit)
+                .where(
+                    Benefit.report_id == report.id,
+                    Benefit.section_id == section.id,
+                    Benefit.approval_state == "APPROVED",
+                )
+                .order_by(Benefit.created_at)
+            ).all()
+        )
         if benefits:
             doc.add_heading("Benefits", level=2)
             for benefit in benefits:
-                doc.add_paragraph(benefit.statement, style="List Bullet")
+                p = doc.add_paragraph(style="List Bullet")
+                p.add_run(f"{benefit.category.replace('_', ' ').title()}: ").bold = True
+                p.add_run(benefit.statement)
+                if benefit.source_label:
+                    doc.add_paragraph(f"Basis: {benefit.source_label}")
                 if benefit.measure_type == "QUANTITATIVE" and (benefit.formula or benefit.assumptions):
                     doc.add_paragraph(f"Measurement basis: {benefit.formula or 'To be established'}. Assumptions: {benefit.assumptions or 'None recorded.'}")
 
         section_evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.section_id == section.id, EvidenceItem.status.in_(["READY", "AVAILABLE"]), EvidenceItem.placement == "INLINE").order_by(EvidenceItem.created_at)).all())
         if section_evidence:
             doc.add_heading("Site Photographs and Evidence", level=2)
-            _add_evidence(doc, db, storage, section_evidence)
+            _add_evidence(doc, db, storage, section_evidence, brand)
 
     appendix = list(db.scalars(select(EvidenceItem).where(EvidenceItem.report_id == report.id, EvidenceItem.status.in_(["READY", "AVAILABLE"]), EvidenceItem.placement == "APPENDIX").order_by(EvidenceItem.created_at)).all())
     if appendix and publication_type != "FOLLOW_UP_QUESTIONNAIRE":
         doc.add_page_break()
         doc.add_heading("Appendix - Supporting Evidence", level=1)
-        _add_evidence(doc, db, storage, appendix)
+        _add_evidence(doc, db, storage, appendix, brand)
 
     output = io.BytesIO()
     doc.save(output)
     if custom_logo_path:
         custom_logo_path.unlink(missing_ok=True)
+    if prospect_logo_path:
+        prospect_logo_path.unlink(missing_ok=True)
     return output.getvalue()
+
+
+def refresh_docx_fields(
+    docx_bytes: bytes,
+    settings: Settings,
+    *,
+    emit_pdf: bool = False,
+) -> tuple[bytes, bytes | None]:
+    """Refresh TOC/page-reference fields through LibreOffice UNO when available.
+
+    Render runs use a Linux system Python with python3-uno. Windows/local
+    validation falls back to the original DOCX; the embedded TOC field remains
+    valid and is marked for automatic refresh when opened in Word.
+    """
+    settings.document_work_dir.mkdir(parents=True, exist_ok=True)
+    helper = Path(__file__).resolve().parents[1] / "scripts" / "refresh_docx_fields.py"
+    system_python = Path("/usr/bin/python3")
+    if os.name == "nt" or not helper.exists() or not system_python.exists():
+        return docx_bytes, None
+
+    with tempfile.TemporaryDirectory(dir=settings.document_work_dir) as tmp:
+        tmp_path = Path(tmp)
+        docx_path = tmp_path / "report.docx"
+        pdf_path = tmp_path / "report.pdf"
+        docx_path.write_bytes(docx_bytes)
+        cmd = [
+            str(system_python),
+            str(helper),
+            str(docx_path),
+            "--libreoffice",
+            settings.libreoffice_path,
+        ]
+        if emit_pdf:
+            cmd.extend(["--pdf", str(pdf_path)])
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=210)
+        if proc.returncode != 0 or not docx_path.exists():
+            return docx_bytes, None
+        refreshed = docx_path.read_bytes()
+        pdf_bytes = pdf_path.read_bytes() if emit_pdf and pdf_path.exists() else None
+        return refreshed, pdf_bytes
 
 
 def convert_docx_to_pdf(docx_bytes: bytes, settings: Settings) -> bytes:

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     deployment_environment: Literal["local", "staging", "production"] = "local"
     app_component: Literal["web", "worker"] = "web"
     app_name: str = "Cloud Inventory Site Discovery"
-    app_version: str = "0.2.0"
+    app_version: str = "0.9.0"
     app_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./discovery.db"
     session_cookie_name: str = "ci_discovery_session"
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     bootstrap_admin_username: str = "Admin"
     bootstrap_admin_password: str | None = None
     bootstrap_admin_email: str = "admin@example.invalid"
+    default_user_temp_password: str | None = None
     default_retention_days: int = 1095
     merge_source_recovery_days: int = 30
 
@@ -39,6 +40,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_project_id: str | None = None
     openai_model: str = "gpt-5-mini"
+    openai_fast_text_model: str | None = None
+    openai_analysis_model: str | None = None
+    openai_request_timeout_seconds: float = 30.0
+    openai_photo_request_timeout_seconds: float = 60.0
     ai_enabled: bool = False
     ai_confidential_content_enabled: bool = False
     openai_data_control_mode: Literal["zero_data_retention", "standard-disabled-for-confidential"] = (
@@ -68,6 +73,21 @@ class Settings(BaseSettings):
             raise RuntimeError("Production requires a PostgreSQL DATABASE_URL.")
         if self.app_component == "web" and not self.bootstrap_admin_password:
             raise RuntimeError("BOOTSTRAP_ADMIN_PASSWORD must be configured as a Render secret for the web service.")
+        if self.app_component == "web" and not self.default_user_temp_password:
+            raise RuntimeError("DEFAULT_USER_TEMP_PASSWORD must be configured as a Render secret for user administration.")
+        if self.default_user_temp_password:
+            if len(self.default_user_temp_password) < 10:
+                raise RuntimeError("DEFAULT_USER_TEMP_PASSWORD must contain at least 10 characters.")
+            groups = [
+                any(c.islower() for c in self.default_user_temp_password),
+                any(c.isupper() for c in self.default_user_temp_password),
+                any(c.isdigit() for c in self.default_user_temp_password),
+                any(not c.isalnum() for c in self.default_user_temp_password),
+            ]
+            if sum(groups) < 3:
+                raise RuntimeError(
+                    "DEFAULT_USER_TEMP_PASSWORD must contain at least three of: lowercase, uppercase, number, symbol."
+                )
         if self.storage_mode != "s3":
             raise RuntimeError("Production requires STORAGE_MODE=s3 because service filesystems are not authoritative storage.")
         missing = [

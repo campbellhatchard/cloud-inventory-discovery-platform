@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import re
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +13,43 @@ from botocore.client import Config
 from .config import Settings
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+class StorageConfigurationError(RuntimeError):
+    pass
+
+
+def storage_configuration_error(settings: Settings) -> str | None:
+    if settings.storage_mode == "local":
+        return None
+    required = {
+        "S3_ENDPOINT": settings.s3_endpoint,
+        "S3_BUCKET": settings.s3_bucket,
+        "S3_ACCESS_KEY_ID": settings.s3_access_key_id,
+        "S3_SECRET_ACCESS_KEY": settings.s3_secret_access_key,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        return f"Missing object storage settings: {', '.join(missing)}"
+    endpoint = str(settings.s3_endpoint or "").strip()
+    lowered = endpoint.lower()
+    if any(token in lowered for token in ("<cloudflare-account-id>", "<account_id>", "<account-id>", "your-account-id")) or "<" in endpoint or ">" in endpoint:
+        return "S3_ENDPOINT still contains a placeholder. Configure the Cloudflare R2 S3 endpoint in Render."
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return "S3_ENDPOINT must be a complete HTTPS URL."
+    return None
+
+
+def storage_configuration_status(settings: Settings) -> dict[str, str | bool | None]:
+    error = storage_configuration_error(settings)
+    return {
+        "configured": error is None,
+        "mode": settings.storage_mode,
+        "endpoint": settings.s3_endpoint if error is None else None,
+        "bucket": settings.s3_bucket if error is None else None,
+        "error": error,
+    }
 
 
 def safe_filename(name: str) -> str:
@@ -39,6 +77,9 @@ class ObjectStorage:
             settings.local_storage_root.mkdir(parents=True, exist_ok=True)
             self.client = None
         else:
+            error = storage_configuration_error(settings)
+            if error:
+                raise StorageConfigurationError(error)
             self.client = boto3.client(
                 "s3",
                 endpoint_url=settings.s3_endpoint,

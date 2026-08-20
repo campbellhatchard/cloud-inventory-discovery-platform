@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from .auth import hash_password
 from .config import get_settings
 from .database import Base, SessionLocal, engine
+from .usernames import clean_username, normalize_username
 from .models import (
     BrandingProfile,
     Capability,
@@ -28,56 +30,57 @@ DEFAULT_CONFIDENTIALITY = (
 )
 
 SECTIONS = [
-    (10, "opportunity", "Opportunity Overview", None, True, False),
-    (20, "company-profile", "Company and Site Profile", None, True, False),
-    (30, "products-handled", "Products and Materials Handled", None, True, True),
+    (10, "opportunity", "Opportunity Overview", None, False, False),
+    (20, "company-profile", "Company and Site Profile", None, False, False),
+    (30, "products-handled", "Products and Materials Handled", None, False, True),
     (40, "operational-footprint", "Operational Footprint and Distribution Network", None, False, True),
-    (50, "master-data", "Master Data", None, True, True),
-    (60, "systems-landscape", "IT and Systems Landscape", None, True, True),
-    (70, "survey-background", "Survey Background and Attendees", None, True, True),
-    (80, "survey-objectives", "Site Survey Objectives", None, True, True),
-    (90, "executive-summary", "Executive Summary", None, True, True),
-    (100, "vision-pain-points", "Vision, Pain Points, and Desired Outcomes", None, True, True),
-    (110, "solution-viability", "Cloud Inventory Solution Viability", None, True, True),
-    (120, "general-observations", "General Operational Observations", None, True, True),
-    (130, "receiving", "Receiving", "RECEIVING", False, True),
-    (140, "putaway", "Putaway", "PUTAWAY", False, True),
-    (150, "transfer", "Transfer", "TRANSFER", False, True),
-    (160, "order-management", "Order Management", "ORDER_MANAGEMENT", False, True),
-    (170, "picking", "Picking", "PICKING", False, True),
-    (180, "packing", "Packing", "PACKING", False, True),
-    (190, "shipping", "Shipping", "SHIPPING", False, True),
-    (200, "cycle-count", "Cycle Count Management", "CYCLE_COUNT", False, True),
-    (210, "work-orders", "Work Orders", "WORK_ORDERS", False, True),
-    (220, "field-inventory", "Field Inventory", "FIELD_INVENTORY", False, True),
-    (230, "manufacturing", "Manufacturing", "MANUFACTURING", False, True),
-    (240, "cross-process", "Cross-Process Findings and Dependencies", None, False, True),
-    (250, "recommended-capabilities", "Recommended Cloud Inventory Capabilities", None, False, True),
-    (260, "expected-benefits", "Expected Benefits", None, False, True),
-    (270, "risks-assumptions", "Risks, Assumptions, and Prerequisites", None, False, True),
-    (280, "next-steps", "Recommended Next Steps", None, False, True),
-    (290, "supporting-evidence", "Supporting Evidence and Attachments", None, False, True),
+    (50, "master-data", "Master Data", None, False, True),
+    (60, "systems-landscape", "IT and Systems Landscape", None, False, True),
+    (70, "survey-background", "Survey Background and Attendees", None, False, True),
+    (80, "survey-objectives", "Site Survey Objectives", None, False, True),
+    (90, "executive-summary", "Executive Summary", None, False, True),
+    (100, "vision-pain-points", "Vision, Pain Points, and Desired Outcomes", None, False, True),
+    (110, "solution-viability", "Cloud Inventory Solution Viability", None, False, True),
+    (120, "general-observations", "General Operational Observations", None, False, True),
+    (130, "general-discussion-points", "General Discussion Points", None, False, True),
+    (140, "receiving", "Receiving", "RECEIVING", False, True),
+    (150, "putaway", "Putaway", "PUTAWAY", False, True),
+    (160, "transfer", "Transfer", "TRANSFER", False, True),
+    (170, "order-management", "Order Management", "ORDER_MANAGEMENT", False, True),
+    (180, "picking", "Picking", "PICKING", False, True),
+    (190, "packing", "Packing", "PACKING", False, True),
+    (200, "shipping", "Shipping", "SHIPPING", False, True),
+    (210, "cycle-count", "Cycle Count Management", "CYCLE_COUNT", False, True),
+    (220, "work-orders", "Work Orders", "WORK_ORDERS", False, True),
+    (230, "printing", "Printing", "PRINTING", False, True),
+    (240, "field-inventory", "Field Inventory", "FIELD_INVENTORY", False, True),
+    (250, "manufacturing", "Manufacturing", "MANUFACTURING", False, True),
+    (260, "cross-process", "Cross-Process Findings and Dependencies", None, False, True),
+    (270, "recommended-capabilities", "Recommended Cloud Inventory Capabilities", None, False, True),
+    (280, "expected-benefits", "Expected Benefits", None, False, True),
+    (290, "risks-assumptions", "Risks, Assumptions, and Prerequisites", None, False, True),
+    (300, "next-steps", "Recommended Next Steps", None, False, True),
+    (310, "supporting-evidence", "Supporting Evidence and Attachments", None, False, True),
 ]
 
 GENERAL_PROMPTS = [
-    (10, "purpose", "What is the purpose and intended outcome of this section?", "LONG_TEXT", "HIGH", True),
-    (20, "facts", "What facts were directly observed or confirmed by the prospect?", "LONG_TEXT", "HIGH", True),
+    (20, "facts", "What facts were directly observed or confirmed by the prospect?", "LONG_TEXT", "HIGH", False),
     (30, "assumptions", "What assumptions remain unverified?", "LONG_TEXT", "NORMAL", False),
     (40, "open-questions", "What open questions require customer follow-up?", "LONG_TEXT", "NORMAL", False),
 ]
 
 PROCESS_PROMPTS = [
-    (10, "process-purpose", "What is the business purpose of this process?", "LONG_TEXT", "HIGH", True),
-    (20, "participants", "Who performs, supervises, or depends on the process?", "LONG_TEXT", "HIGH", True),
-    (30, "trigger-inputs", "What triggers the process and what inputs or documents are required?", "LONG_TEXT", "HIGH", True),
-    (40, "current-steps", "Describe the current process from start to finish, including decision points.", "LONG_TEXT", "HIGH", True),
-    (50, "systems-documents", "Which systems, spreadsheets, forms, labels, and devices are used?", "LONG_TEXT", "HIGH", True),
+    (10, "process-purpose", "What is the business purpose of this process?", "LONG_TEXT", "HIGH", False),
+    (20, "participants", "Who performs, supervises, or depends on the process?", "LONG_TEXT", "HIGH", False),
+    (30, "trigger-inputs", "What triggers the process and what inputs or documents are required?", "LONG_TEXT", "HIGH", False),
+    (40, "current-steps", "Describe the current process from start to finish, including decision points.", "LONG_TEXT", "HIGH", False),
+    (50, "systems-documents", "Which systems, spreadsheets, forms, labels, and devices are used?", "LONG_TEXT", "HIGH", False),
     (60, "data-captured", "What item, location, lot, serial, quantity, UOM, owner, job, work order, or other data is captured?", "LONG_TEXT", "NORMAL", False),
-    (70, "exceptions-workarounds", "What exceptions, manual workarounds, duplicate entry, or off-system records exist?", "LONG_TEXT", "HIGH", True),
+    (70, "exceptions-workarounds", "What exceptions, manual workarounds, duplicate entry, or off-system records exist?", "LONG_TEXT", "HIGH", False),
     (80, "volumes-service", "What are the volumes, frequencies, peaks, service levels, and staffing requirements?", "LONG_TEXT", "NORMAL", False),
     (90, "controls", "What controls, approvals, validations, or segregation of duties are used?", "LONG_TEXT", "NORMAL", False),
-    (100, "pain-points", "What causes delay, error, rework, risk, congestion, inventory inaccuracy, or excessive supervision?", "LONG_TEXT", "HIGH", True),
-    (110, "impact", "What is the operational, customer, labor, financial, safety, or compliance impact?", "LONG_TEXT", "HIGH", True),
+    (100, "pain-points", "What causes delay, error, rework, risk, congestion, inventory inaccuracy, or excessive supervision?", "LONG_TEXT", "HIGH", False),
+    (110, "impact", "What is the operational, customer, labor, financial, safety, or compliance impact?", "LONG_TEXT", "HIGH", False),
     (120, "baseline", "What measurable baseline could demonstrate the current performance and future improvement?", "LONG_TEXT", "NORMAL", False),
     (130, "photos", "Capture photographs of the work area, labels, documents, storage method, equipment, or exceptions that support the observation.", "PHOTO", "HIGH", False),
     (140, "future-functionality", "Which approved Cloud Inventory capabilities could address the documented process and pain points?", "LONG_TEXT", "NORMAL", False),
@@ -92,7 +95,9 @@ def seed() -> None:
     settings = get_settings()
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
-        admin = db.scalar(select(User).where(User.username == settings.bootstrap_admin_username))
+        bootstrap_username = clean_username(settings.bootstrap_admin_username)
+        bootstrap_username_key = normalize_username(bootstrap_username)
+        admin = db.scalar(select(User).where(User.username_key == bootstrap_username_key))
         if not admin:
             password = settings.bootstrap_admin_password
             if not password:
@@ -100,7 +105,7 @@ def seed() -> None:
                     raise RuntimeError("BOOTSTRAP_ADMIN_PASSWORD is required in production.")
                 password = "ChangeMe-Development-Only!"
                 print("WARNING: development bootstrap admin password is ChangeMe-Development-Only!")
-            admin = User(username=settings.bootstrap_admin_username, email=settings.bootstrap_admin_email, display_name="Administrator", password_hash=hash_password(password), force_password_change=True)
+            admin = User(username=bootstrap_username, username_key=bootstrap_username_key, email=settings.bootstrap_admin_email, display_name="Administrator", password_hash=hash_password(password), force_password_change=True)
             db.add(admin)
             db.flush()
             db.add(UserRole(user_id=admin.id, role="ADMIN"))
@@ -108,7 +113,7 @@ def seed() -> None:
 
         brand = db.scalar(select(BrandingProfile).where(BrandingProfile.name == "Denver Cloud Inventory", BrandingProfile.version == 1))
         if not brand:
-            brand = BrandingProfile(name="Denver Cloud Inventory", version=1, is_default=True, primary_color="#1F3447", secondary_color="#00A7C7", accent_color="#6B7785", heading_font="Aptos Display", body_font="Aptos", confidentiality_text=DEFAULT_CONFIDENTIALITY, draft_watermark="DRAFT - CONFIDENTIAL", footer_text="Cloud Inventory | Confidential", created_by=admin.id)
+            brand = BrandingProfile(name="Denver Cloud Inventory", version=1, is_default=True, primary_color="#1F3447", secondary_color="#00A7C7", accent_color="#6B7785", heading_font="Aptos Display", body_font="Aptos", confidentiality_text=DEFAULT_CONFIDENTIALITY, draft_watermark="DRAFT - CONFIDENTIAL", footer_text=("This document is the property of and proprietary to Cloud Inventory and contains trade secret and confidential information, and is solely for the Customer's internal use. Without the express written consent of Cloud Inventory, this document shall not be used, reproduced, copied, disclosed, or transmitted, in whole or in part. Copyright Cloud Inventory. All rights reserved."), photo_size_uom="INCHES", landscape_photo_width=6.5, landscape_photo_height=4.25, portrait_photo_width=4.25, portrait_photo_height=6.5, created_by=admin.id)
             db.add(brand)
             db.flush()
 
@@ -123,7 +128,7 @@ def seed() -> None:
         for order, stable, question, answer_type, priority, required in GENERAL_PROMPTS:
             if not db.scalar(select(PromptDefinition).where(PromptDefinition.process_module.is_(None), PromptDefinition.stable_key == stable, PromptDefinition.version == 1)):
                 db.add(PromptDefinition(process_module=None, stable_key=stable, question=question, answer_type=answer_type, display_order=order, mobile_priority=priority, required_on_final=required, version=1))
-        for module in ["RECEIVING", "PUTAWAY", "TRANSFER", "ORDER_MANAGEMENT", "PICKING", "PACKING", "SHIPPING", "CYCLE_COUNT", "WORK_ORDERS", "FIELD_INVENTORY", "MANUFACTURING"]:
+        for module in ["RECEIVING", "PUTAWAY", "TRANSFER", "ORDER_MANAGEMENT", "PICKING", "PACKING", "SHIPPING", "CYCLE_COUNT", "WORK_ORDERS", "PRINTING", "FIELD_INVENTORY", "MANUFACTURING"]:
             for order, stable, question, answer_type, priority, required in PROCESS_PROMPTS:
                 if not db.scalar(select(PromptDefinition).where(PromptDefinition.process_module == module, PromptDefinition.stable_key == stable, PromptDefinition.version == 1)):
                     db.add(PromptDefinition(process_module=module, stable_key=stable, question=question, answer_type=answer_type, display_order=order, mobile_priority=priority, required_on_final=required, version=1))
@@ -158,6 +163,9 @@ def seed() -> None:
             db.add(KnowledgeEntry(
                 source_type="CONTROLLED_PRODUCT_REFERENCE",
                 source_ref=source_ref,
+                source_version=capability.product_version,
+                knowledge_kind="PRODUCT_CAPABILITY",
+                structured_data={"capability_code": capability.capability_code},
                 title=f"{capability.name} ({capability.capability_code})",
                 process_module=capability.domain,
                 content=content,
@@ -169,6 +177,39 @@ def seed() -> None:
                 approved_by=admin.id if capability.status == "APPROVED" else None,
                 created_by=admin.id,
             ))
+
+        # v0.8.5: the Guided Setup sources are controlled product/configuration
+        # knowledge. They enrich solution mapping only; they never create or
+        # modify discovery PromptDefinition records.
+        config_seed_path = ROOT / "assets" / "configuration-knowledge-seed.json"
+        if config_seed_path.exists():
+            config_seed = json.loads(config_seed_path.read_text(encoding="utf-8"))
+            capability_lookup = {
+                item.capability_code: item
+                for item in db.scalars(select(Capability).order_by(Capability.capability_code)).all()
+            }
+            for record in config_seed.get("records") or []:
+                source_ref = str(record.get("source_ref") or "").strip()
+                if not source_ref or db.scalar(select(KnowledgeEntry.id).where(KnowledgeEntry.source_ref == source_ref)):
+                    continue
+                capability = capability_lookup.get(str(record.get("capability_code") or ""))
+                db.add(KnowledgeEntry(
+                    source_type="CONTROLLED_CONFIGURATION_REFERENCE",
+                    source_ref=source_ref,
+                    source_version=str(record.get("source_version") or "") or None,
+                    knowledge_kind="PRODUCT_CONFIGURATION",
+                    structured_data=record.get("structured_data") or {},
+                    title=str(record.get("title") or source_ref)[:250],
+                    process_module=(str(record.get("process_module") or "").strip() or None),
+                    content=str(record.get("content") or "").strip(),
+                    capability_id=capability.id if capability else None,
+                    prospect_id=None,
+                    classification="INTERNAL",
+                    reusable_across_prospects=True,
+                    approval_state="APPROVED",
+                    approved_by=admin.id,
+                    created_by=admin.id,
+                ))
         db.commit()
         print("Seed complete.")
 

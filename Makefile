@@ -29,6 +29,7 @@ compile:
 
 js-check:
 	node --check app/static/app.js
+	node --check app/static/enhancements-v0.9.0.js
 
 check: lint test compile js-check
 

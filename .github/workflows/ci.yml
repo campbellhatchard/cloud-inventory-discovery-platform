@@ -19,6 +19,7 @@ jobs:
       - run: pytest -q
       - run: python -m compileall app
       - run: node --check app/static/app.js
+      - run: node --check app/static/enhancements-v0.9.0.js
       - name: Parse Render YAML
         run: python -c "import pathlib, yaml; data=yaml.safe_load(pathlib.Path('render.yaml').read_text()); assert data and 'projects' in data"
       - name: Parse PowerShell deployment scripts

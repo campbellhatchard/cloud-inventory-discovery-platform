@@ -38,8 +38,11 @@ def test_full_capture_and_document_generation(admin_session):
     report = client.get(f"/api/reports/{report_id}")
     assert report.status_code == 200
     payload = report.json()
-    assert len(payload["sections"]) == 29
+    assert len(payload["sections"]) == 31
     receiving = next(s for s in payload["sections"] if s["process_module"] == "RECEIVING")
+    printing = next(s for s in payload["sections"] if s["process_module"] == "PRINTING")
+    assert printing["title"] == "Printing"
+    assert len(payload["prompts_by_module"]["PRINTING"]) == 18
     prompts = payload["prompts_by_module"]["RECEIVING"]
 
     response = client.put(
@@ -76,6 +79,9 @@ def test_full_capture_and_document_generation(admin_session):
         headers=h,
     )
     assert evidence.status_code == 200, evidence.text
+    refreshed = client.get(f"/api/reports/{report_id}").json()
+    refreshed_receiving = next(s for s in refreshed["sections"] if s["id"] == receiving["id"])
+    assert refreshed_receiving["state"] == "ACTIVE"
 
     validation = client.post(f"/api/reports/{report_id}/validate", json={"final_requested": False}, headers=h)
     assert validation.status_code == 200
@@ -103,11 +109,13 @@ def test_full_capture_and_document_generation(admin_session):
         assert "DRAFT - CONFIDENTIAL" in header_xml
 
 
-def test_final_publication_is_blocked_when_required_content_missing(admin_session):
+def test_final_publication_allows_empty_optional_sections(admin_session):
     client, me = admin_session
     _, report_id = create_report(client, me)
+    ready = client.patch(f"/api/reports/{report_id}", json={"state": "READY_FOR_REVIEW"}, headers=headers(me))
+    assert ready.status_code == 200, ready.text
     response = client.post(f"/api/reports/{report_id}/publications", json={"publication_type": "FULL_DISCOVERY", "is_final": True}, headers=headers(me))
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert detail["message"] == "Final publication validation failed."
-    assert any(issue["severity"] == "ERROR" for issue in detail["issues"])
+    assert response.status_code == 200, response.text
+    validation = response.json()["validation"]
+    assert validation["passed"] is True
+    assert not any(issue["code"] in {"REQUIRED_SECTION_EMPTY", "REQUIRED_PROMPT_UNANSWERED"} for issue in validation["issues"])

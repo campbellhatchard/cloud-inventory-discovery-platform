@@ -6,28 +6,58 @@ The canonical product and software requirements are in [`docs/SPECIFICATION.md`]
 
 ## Current release
 
-**Version:** 0.2.0
-**Status:** GitHub-ready, Render-ready implementation with a staging-first PowerShell deployment toolkit
+**Version:** 0.9.0
+**Status:** Fast text-only AI wording is isolated from verification and independent Photo Intelligence; Master Data and Other Quick Entry/navigation enhancements included; staging validation required
 **Primary benchmark:** Denver International Airport Site Survey Report structure and branding
 
 ## What is implemented
 
 - Responsive mobile, tablet, and desktop single-page interface
 - Application-managed authentication using Argon2id password hashing
-- First-login password change, secure sessions, CSRF protection, and login lockout
+- Usernames preserve administrator-entered capitalization while authentication and uniqueness checks are case-insensitive
+- First-login password change, secure sessions, CSRF protection, login lockout, administrator password reset, editable global roles, and reversible Active/Inactive user status
 - Contributor, reviewer, owner, and administrator roles
-- Prospect-level isolation, report membership, section assignment, comments, and optimistic concurrency
+- Prospect-level isolation, report membership, comments, and optimistic concurrency
 - Multiple reports per prospect and owner-controlled report merge with lineage
+- Guided prospect creation with optional site and engagement creation
+- Browser-defaulted IANA timezone selection for sites
+- Context-correct full-colour and negative Cloud Inventory logos
+- Prospect-specific logo upload and header display
+- Dedicated Overview, Report, and Demo Preparation workspaces in the report navigation
+- Compiled Report review workspace with centralized validation and document generation
+- Configurable landscape and portrait report-photo dimensions in inches or centimetres
+- In-app evidence preview, multi-select move, and controlled evidence deletion
+- Context-preserving photograph upload and administration-tab navigation
+- Fast text-only AI current-operations wording with draft-first persistence, unchanged-source restoration, explicit regeneration, independent asynchronous verification, refinement lineage, and controlled acceptance
+- Independent Photo Intelligence analyzes each photograph without narrative context, caches the visual interpretation by file fingerprint, then optionally correlates it with the Current Operations Narrative to produce a separately reviewable revision
+- Prioritized worker lanes isolate fast text, AI verification, photo intelligence, general AI, and publication processing
+- Direct section-level photograph upload with Quick Entry capture retained
+- Browser text-to-speech uses System / Browser Default unless the user selects another voice exposed by the current device
+- Source-aware Cloud Inventory Approach generation using approved capabilities, approved configuration intelligence, and approved historical knowledge
+- Governed Cloud Inventory configuration knowledge derived from controlled Guided Setup sources without adding discovery questions
+- Current Operations Narrative is the single user-facing operational-note record; typed Quick Entry classifications are synchronized internally for AI, readiness, mapping, and benefits
+- Section-page AI History is hidden by default and revealed on demand; both AI History and Discovery Questions reset closed whenever the user navigates to another report screen
+- Per-section Demo Priority collection/display is retired; historical rows remain stored but no longer influence active demo-plan generation or readiness
+- Approved functionality mappings remain governed internally but are no longer rendered as a dedicated section-page display
+- Discovery Questions are optional read-only reference lists revealed on demand; operational answers are captured in Current Operations Narrative/Quick Entry rather than per-question fields
+- Stable left-navigation position while moving between report sections
 - Standard and custom report sections
-- Guided questions plus free-form narrative capture
-- Quick field capture, browser autosave, and offline-safe IndexedDB queue
-- Photograph and attachment upload, image normalization, captions, placement control, and text extraction
-- Findings, baseline metrics, approved capability mappings, qualitative and measurable benefits
+- One editable Current Operations Narrative per operational area, with Discovery Questions hidden by default and available as a read-only reference list
+- Quick Entry field-capture screen appends typed Observation/Pain Point/Risk/Gap/Strength/Opportunity notes directly into the destination Current Operations Narrative
+- Quick Entry includes Master Data and routes Other to the preserved Other operational page beneath Manufacturing
+- Native-camera and attachment capture, image normalization, optional captions, automatic section placement, and text extraction
+- Narrative-derived operational classifications, baseline metrics, approved capability mappings, qualitative and measurable benefits
 - Governed capability catalog and human-approved knowledge repository
-- Queued AI assistance with policy gating and mandatory human review
+- Queued AI assistance with policy gating and mandatory human review before AI-generated wording is applied
 - Draft/final validation and publication workflow
 - Denver-styled DOCX and PDF generation with configurable branding and draft watermarking
 - Full Discovery Report, Solution Demonstration Brief, and Customer Follow-up Questionnaire outputs
+- Content-driven report readiness dashboard across current operations, solution approach, approved mappings, and benefits
+- Whole-report AI quality review for completeness, consistency, traceability, unsupported claims, duplication, and follow-up gaps
+- Version-controlled manual and AI-assisted executive summary with factual verification
+- Visible report source and claim traceability classifications
+- Central reviewer queue plus administrator AI, worker, storage, publication, and lifecycle health dashboard
+- Capability and knowledge review dates, product-version applicability, and knowledge expiration controls
 - Prospect export, archive workflow, retention review, legal hold, and controlled deletion
 - Audit log
 - PostgreSQL/Alembic migrations, S3-compatible private object storage, DB-backed worker queue
@@ -47,8 +77,11 @@ FastAPI Web Service ---- PostgreSQL
     |       photos, attachments, DOCX, PDF, exports
     |
     +---- DB-backed worker
+            fast text generation
+            AI verification
+            photo intelligence
+            general AI generation
             publication generation
-            queued AI generation
             retention maintenance
 ```
 
@@ -116,6 +149,7 @@ ruff check .
 pytest -q
 python -m compileall app
 node --check app/static/app.js
+node --check app/static/enhancements-v0.9.0.js
 ```
 
 ## Initial administrator
@@ -180,11 +214,15 @@ AI_CONFIDENTIAL_CONTENT_ENABLED=true
 OPENAI_DATA_CONTROL_MODE=zero_data_retention
 OPENAI_API_KEY=<secret>
 OPENAI_MODEL=gpt-5-mini
+OPENAI_FAST_TEXT_MODEL=gpt-5-mini
+OPENAI_ANALYSIS_MODEL=gpt-5-mini
+OPENAI_REQUEST_TIMEOUT_SECONDS=30
+OPENAI_PHOTO_REQUEST_TIMEOUT_SECONDS=60
 ```
 
-The application uses the Responses API with `store=False`, queues generation in the worker, restricts recommendations to approved capabilities and approved knowledge, and stores all output as a pending suggestion. A reviewer must approve content before it is applied.
+`OPENAI_FAST_TEXT_MODEL` and `OPENAI_ANALYSIS_MODEL` fall back to `OPENAI_MODEL` when unset. The application uses the Responses API with `store=False`, queues processing in internal worker lanes, restricts recommendation workflows to approved capabilities and approved knowledge, and stores AI wording as pending suggestions. Current Operations wording and photo-supported revisions require human approval before they are applied.
 
-Do not enable confidential AI processing until the organization has verified that its OpenAI project is approved for the required data-retention controls. See [`docs/SECURITY.md`](docs/SECURITY.md).
+Do not enable confidential AI processing, including Photo Intelligence, until the organization has verified that its OpenAI project is approved for the required data-retention controls. See [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ## Supported evidence uploads
 
@@ -198,26 +236,31 @@ Do not enable confidential AI processing until the organization has verified tha
 - JSON
 - XML
 
-The application applies file-size limits, extension/content checks, safe filenames, private storage, and structural validation. It does **not** include an antivirus engine in v0.2.0. Deployments that require malware scanning must add an approved scanning service or quarantine gateway before wider production use.
+The application applies file-size limits, extension/content checks, safe filenames, private storage, and structural validation. It does **not** include an antivirus engine in v0.4.0. Deployments that require malware scanning must add an approved scanning service or quarantine gateway before wider production use.
 
 ## Repository guide
 
 ```text
 app/
-  api.py                 REST API
-  auth.py                authentication and authorization helpers
-  ai_service.py          policy, grounding, OpenAI request, AI job execution
-  documents.py           DOCX and PDF generation
-  extraction.py          supporting-document text extraction
-  maintenance.py         retention and merged-report cleanup
-  models.py              SQLAlchemy domain model
-  publication_service.py publication worker logic
-  static/                 responsive PWA frontend
-alembic/                  database migrations
-assets/                   capability/question seeds and default logo
-docs/                     specification and operating documentation
-tests/                    security, access, workflow, collaboration tests
-render.yaml               Render Blueprint
+  api.py                         REST API
+  auth.py                        authentication and authorization helpers
+  ai_service.py                  governed general AI workflows
+  fast_ai_service.py             latency-isolated current-operations wording and verification
+  photo_ai_service.py            independent photo analysis and narrative correlation
+  enhancement_fast_api.py        fast wording API
+  enhancement_photo_api.py       Photo Intelligence status, analysis, and revision API
+  enhancement_photo_review_api.py photo-supported revision review API
+  documents.py                   DOCX and PDF generation
+  extraction.py                  supporting-document text extraction
+  maintenance.py                 retention and merged-report cleanup
+  models.py                      SQLAlchemy domain model
+  publication_service.py         publication worker logic
+  static/                        responsive PWA frontend
+alembic/                          database migrations
+assets/                           capability/question seeds and default logo
+docs/                             specification and operating documentation
+tests/                            security, access, workflow, collaboration tests
+render.yaml                       Render Blueprint
 ```
 
 ## Known production prerequisites
@@ -242,5 +285,13 @@ Before customer-confidential production use, the deploying organization must com
 - [Operations and retention](docs/OPERATIONS.md)
 - [User guide](docs/USER_GUIDE.md)
 - [Build status and acceptance evidence](docs/BUILD_STATUS.md)
-- [Release notes v0.2.0](docs/RELEASE_NOTES_v0.2.0.md)
+- [Release notes v0.9.0](docs/RELEASE_NOTES_v0.9.0.md)
+- [Prospect onboarding and branding specification v0.4.0](docs/PROSPECT_ONBOARDING_SPEC_v0.4.0.md)
+- [Release notes v0.4.0](docs/RELEASE_NOTES_v0.4.0.md)
+- [Quick Entry enhancement specification v0.3.0](docs/QUICK_ENTRY_SPEC_v0.3.0.md)
+- [Release notes v0.3.0](docs/RELEASE_NOTES_v0.3.0.md)
+- [Release notes v0.2.1 baseline](docs/RELEASE_NOTES_v0.2.1.md)
+- [Acceptance test report v0.2.1](docs/ACCEPTANCE_TEST_REPORT_v0.2.1.md)
+- [Baseline manifest v0.2.1](docs/BASELINE_MANIFEST_v0.2.1.md)
+- [Enhancement change template](docs/ENHANCEMENT_CHANGE_TEMPLATE.md)
 - [Generated OpenAPI schema](docs/openapi.json)

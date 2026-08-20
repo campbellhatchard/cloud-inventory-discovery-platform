@@ -4,7 +4,7 @@
 
 ### Contributor
 
-Captures discovery notes, answers prompts, uploads evidence, records findings and metrics, and edits authorized report sections.
+Captures discovery notes, answers prompts, uploads evidence, records metrics, and edits authorized report sections.
 
 ### Reviewer
 
@@ -41,16 +41,16 @@ Multiple contributors may each have a report, or they may work in one report usi
 
 ## 3. Capture onsite observations
 
-### Quick mobile workflow
+### Quick Entry workflow
 
-1. Open the report on the phone/tablet.
-2. Choose the operational process.
-3. Enter a short observation or pain point.
-4. Add impact or follow-up detail where known.
-5. Take/upload a photograph.
-6. Add a specific caption explaining what the image proves.
+1. Open the report. Quick Entry is the first screen.
+2. Select the Area of Operation. The selection remains active for subsequent captures.
+3. Select the finding type and enter the field note in the large note area.
+4. Select **Capture Note**. Only the note clears; the operational area and finding type remain selected.
+5. Optionally enter a caption, then select **Take Photo** to invoke the native camera or **Choose File** to attach an existing image or document.
+6. Continue capturing notes and evidence. Change the Area of Operation only when the destination report section changes.
 
-The application saves drafts and queues changes during a transient connection loss. Confirm the sync indicator before leaving the site.
+Quick Entry routes each note immediately into the selected section’s **Current Operations Narrative**. The selected Type is retained as an editable subheading such as Observation, Pain Point, Risk, Gap, Strength, or Opportunity. **Other** routes to General Operational Observations. The application queues notes and evidence during a transient connection loss and retains the destination section selected at capture time. Confirm the sync indicator before leaving the site.
 
 ### Strong evidence pattern
 
@@ -73,7 +73,7 @@ Avoid writing a solution recommendation before the current process and problem a
 
 ## 4. Complete a process assessment
 
-For Receiving, Putaway, Transfer, Order Management, Picking, Packing, Shipping, Cycle Count Management, Work Orders, Field Inventory, and Manufacturing, use the standard structure:
+For Receiving, Putaway, Transfer, Order Management, Picking, Packing, Shipping, Cycle Count Management, Work Orders, Printing, Field Inventory, and Manufacturing, use the standard structure:
 
 1. Process purpose
 2. Participants and roles
@@ -110,7 +110,7 @@ The owner:
 1. selects the target consolidated report;
 2. selects source reports from the same prospect;
 3. runs merge and reviews conflicts;
-4. verifies cloned evidence and findings;
+4. verifies cloned evidence and unified Current Operations Narrative content;
 5. chooses whether source reports enter the recovery/deletion lifecycle.
 
 The target report records source lineage. Merge should not be treated as automatic editorial reconciliation.
@@ -140,14 +140,41 @@ Do not state guaranteed improvement percentages without an evidenced calculation
 
 ## 9. Use AI assistance
 
-AI is available only when enabled by administrators and privacy policy.
+AI is available only when enabled by administrators and privacy policy. AI output remains a draft until a user accepts or a reviewer approves it.
 
-1. Select a report/section.
-2. request the relevant assistance type;
-3. continue working while the queued job runs;
-4. review the pending suggestion;
-5. verify every customer fact and capability reference;
-6. approve, reject, or revise.
+### Fast AI Enhanced Wording
+
+Use **AI Enhance** on Current Operations when the written discovery is ready to be professionally rewritten. The workflow is text-only and uses the Current Operations Narrative, its preserved classification subheadings, guided responses, and relevant metrics. AI enhancement must preserve user-selected Observation/Pain Point/Risk/Gap/Strength/Opportunity classifications. Photographs are human-reviewed evidence and are never sent to AI for interpretation.
+
+1. Select **AI Enhance**.
+2. The application first checks the database for an active unaccepted suggestion created from the same written sources.
+3. When the source fingerprint matches, the saved wording is restored immediately and no new model request is created. This behavior is independent of elapsed time, browser, or device.
+4. When no matching suggestion exists, a new draft is generated and committed before verification completes. You may close the window and return later.
+5. While the draft is visible, source verification continues in the background.
+6. **Accept enhanced text** becomes available only after verification passes.
+7. Use **Refine** to revise the immediately preceding AI wording. The application sends the prior wording, the exact refinement request, and the current written sources. The original suggestion remains in history.
+8. Use **Generate another version** only when you intentionally want an alternative draft from unchanged sources.
+9. When the written sources have changed, the prior suggestion is shown as stale and cannot be refined or accepted. Select **Generate updated wording**.
+
+Closing the AI window does not cancel the background job. Pending wording and processing status are database-backed and can be restored later.
+
+### Photographs and AI privacy
+
+Photographs remain normal discovery evidence for human review, captions, section placement, and report publication. The application does not send photograph pixels or image derivatives to an AI provider and does not generate AI visual interpretations or photo-to-text revisions. Human-entered photograph captions remain ordinary written evidence and may be used by text workflows where otherwise applicable.
+
+### Speech settings
+
+Text-to-speech uses **System / Browser Default** unless you select another voice exposed by the current browser/device. Open the account menu and select **Speech settings** to choose a voice and speaking speed or test the selection. Speech preferences are stored only on that browser/device. If a selected voice is no longer available, the application falls back to System / Browser Default.
+
+### Other AI assistance
+
+For Cloud Inventory Approach, targeted benefits, Executive Summary, report-quality review, and demo planning:
+
+1. request the relevant assistance type;
+2. continue working while the queued job runs;
+3. review the pending suggestion;
+4. verify every customer fact and capability reference;
+5. approve, reject, or revise.
 
 Approved suggestions may add narrative, capability mappings, or benefits. AI output is not authoritative and is never included automatically.
 
@@ -193,3 +220,10 @@ When an opportunity closes:
 5. follow the retention review process when due.
 
 Permanent deletion is an administrator-controlled, audited action and cannot be reversed from the application.
+
+
+## Guided prospect creation
+
+Select **Create prospect** to enter the prospect, optional site, and optional engagement in one workflow. Site and engagement creation are enabled by default; clear either checkbox to skip that record. When both are entered, the engagement is linked to the new site automatically. The application then opens Sites, Engagements, or Reports according to the next incomplete step.
+
+Site timezone defaults to the browser timezone and can be changed using the IANA timezone dropdown.

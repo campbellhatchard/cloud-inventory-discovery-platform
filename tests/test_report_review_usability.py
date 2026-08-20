@@ -45,7 +45,9 @@ def test_optional_questions_general_discussion_and_purpose_removed(admin_session
     report = client.get(f"/api/reports/{report_id}").json()
     titles = [section["title"] for section in report["sections"]]
     assert "General Discussion Points" in titles
-    assert titles.index("General Operational Observations") < titles.index("General Discussion Points") < titles.index("Receiving")
+    assert "Other" in titles
+    assert "General Operational Observations" not in titles
+    assert titles.index("Other") == titles.index("Manufacturing") + 1
     assert all(section["required_on_final"] is False for section in report["sections"])
     prompts = [prompt for items in report["prompts_by_module"].values() for prompt in items]
     assert prompts

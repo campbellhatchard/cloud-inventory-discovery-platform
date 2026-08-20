@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     deployment_environment: Literal["local", "staging", "production"] = "local"
     app_component: Literal["web", "worker"] = "web"
     app_name: str = "Cloud Inventory Site Discovery"
-    app_version: str = "0.8.11"
+    app_version: str = "0.9.0"
     app_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./discovery.db"
     session_cookie_name: str = "ci_discovery_session"
@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_project_id: str | None = None
     openai_model: str = "gpt-5-mini"
+    openai_fast_text_model: str | None = None
+    openai_analysis_model: str | None = None
+    openai_request_timeout_seconds: float = 30.0
+    openai_photo_request_timeout_seconds: float = 60.0
     ai_enabled: bool = False
     ai_confidential_content_enabled: bool = False
     openai_data_control_mode: Literal["zero_data_retention", "standard-disabled-for-confidential"] = (

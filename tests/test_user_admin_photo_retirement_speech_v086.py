@@ -77,9 +77,9 @@ def test_v086_version_migration_photo_retirement_and_speech_contract() -> None:
     ai_service = (ROOT / "app" / "ai_service.py").read_text(encoding="utf-8")
     worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.11"' in config
-    assert 'version = "0.8.11"' in pyproject
-    assert "ci-discovery-v0.8.11" in sw
+    assert 'app_version: str = "0.9.0"' in config
+    assert 'version = "0.9.0"' in pyproject
+    assert "ci-discovery-v0.9.0" in sw
     assert 'down_revision = "j50g3b9e7c10"' in migration
     assert 'op.drop_table("evidence_ai_observations")' in migration
     assert "PHOTO_ANALYSIS" not in worker
@@ -166,7 +166,7 @@ def test_v086_user_administration_is_superseded_by_reversible_v087_lifecycle(adm
     )
     assert deleted.status_code in {404, 405}
 
-def test_photo_upload_remains_human_evidence_and_all_photo_ai_routes_are_gone(admin_session) -> None:
+def test_photo_upload_remains_human_evidence_and_legacy_photo_ai_routes_stay_retired(admin_session) -> None:
     client, me = admin_session
     h = headers(me)
     _, _, report_payload = create_report(client, me, "Photo Evidence Only")

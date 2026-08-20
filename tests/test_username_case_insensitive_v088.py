@@ -83,7 +83,7 @@ def test_v088_release_contract() -> None:
     migration = (root / "alembic/versions/m83j6e2h0f43_case_insensitive_usernames.py").read_text(encoding="utf-8")
     ui = (root / "app/static/app.js").read_text(encoding="utf-8")
 
-    assert 'app_version: str = "0.8.11"' in config
+    assert 'app_version: str = "0.9.0"' in config
     assert "username_key" in model
     assert "User.username_key == normalize_username(username)" in auth
     assert 'down_revision = "l72i5d1g9e32"' in migration

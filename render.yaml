@@ -1,18 +1,18 @@
 projects:
-  - name: cloud-inventory-discovery-staging
+  - name: cloud-inventory-discovery-production
     environments:
-      - name: Staging
+      - name: Production
         networking:
           isolation: enabled
         permissions:
-          protection: disabled
+          protection: enabled
         services:
           - type: web
-            name: cloud-inventory-discovery-staging
+            name: cloud-inventory-discovery-production
             runtime: docker
             plan: "starter"
             region: ohio
-            branch: staging
+            branch: main
             autoDeployTrigger: "off"
             dockerfilePath: ./Dockerfile
             dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
@@ -22,7 +22,7 @@ projects:
               - key: ENVIRONMENT
                 value: production
               - key: DEPLOYMENT_ENVIRONMENT
-                value: staging
+                value: production
               - key: APP_COMPONENT
                 value: web
               - key: APP_VERSION
@@ -30,11 +30,11 @@ projects:
               - key: APP_BASE_URL
                 fromService:
                   type: web
-                  name: cloud-inventory-discovery-staging
+                  name: cloud-inventory-discovery-production
                   envVarKey: RENDER_EXTERNAL_URL
               - key: DATABASE_URL
                 fromDatabase:
-                  name: cloud-inventory-discovery-staging-db
+                  name: cloud-inventory-discovery-production-db
                   property: connectionString
               - key: BOOTSTRAP_ADMIN_USERNAME
                 value: Admin
@@ -88,11 +88,11 @@ projects:
                 value: "3600"
 
           - type: worker
-            name: cloud-inventory-discovery-staging-worker
+            name: cloud-inventory-discovery-production-worker
             runtime: docker
             plan: "starter"
             region: ohio
-            branch: staging
+            branch: main
             autoDeployTrigger: "off"
             dockerfilePath: ./Dockerfile
             dockerCommand: python -m app.worker
@@ -100,14 +100,14 @@ projects:
               - key: ENVIRONMENT
                 value: production
               - key: DEPLOYMENT_ENVIRONMENT
-                value: staging
+                value: production
               - key: APP_COMPONENT
                 value: worker
               - key: APP_VERSION
                 value: "0.9.0"
               - key: DATABASE_URL
                 fromDatabase:
-                  name: cloud-inventory-discovery-staging-db
+                  name: cloud-inventory-discovery-production-db
                   property: connectionString
               - key: STORAGE_MODE
                 value: s3
@@ -151,7 +151,7 @@ projects:
                 value: "3600"
 
         databases:
-          - name: cloud-inventory-discovery-staging-db
+          - name: cloud-inventory-discovery-production-db
             databaseName: discovery
             user: discovery_app
             plan: basic-256mb
